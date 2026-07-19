@@ -1,0 +1,109 @@
+function tick() {
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleTimeString('en-GB', { hour12: false });
+}
+setInterval(tick, 1000); tick();
+
+function timeAgo(isoString) {
+  const t = new Date(isoString.replace(/(\.\d+)?Z$/, 'Z')).getTime();
+  const diffMin = Math.floor((Date.now() - t) / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return `${Math.floor(diffHr / 24)}d ago`;
+}
+
+function drawBricks(bricks, boxSize) {
+  const canvas = document.getElementById('renko');
+  const ratio = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * ratio; canvas.height = h * ratio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(ratio, ratio);
+  ctx.clearRect(0, 0, w, h);
+
+  // background grid
+  ctx.strokeStyle = '#1c1c17';
+  ctx.lineWidth = 1;
+  for (let y = 0; y < h; y += h / 8) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+
+  if (!bricks.length) {
+    ctx.fillStyle = '#77756b';
+    ctx.font = '13px IBM Plex Mono';
+    ctx.fillText('No bricks yet — waiting on the first scan.', 16, h / 2);
+    return;
+  }
+
+  // How many bricks fit comfortably
+  const maxBricks = Math.max(10, Math.floor(w / 14));
+  const shown = bricks.slice(-maxBricks);
+
+  const brickW = w / (shown.length + 2);
+  const brickH = Math.min(h / 16, 26);
+
+  // compute vertical levels (cumulative step per brick)
+  let level = 0;
+  const levels = shown.map((b) => {
+    level += b.direction === 1 ? -1 : 1;
+    return level;
+  });
+  const minLevel = Math.min(...levels, 0);
+  const maxLevel = Math.max(...levels, 0);
+  const span = (maxLevel - minLevel + 2) * brickH;
+  const baseY = (h - span) / 2 + (maxLevel + 1) * brickH;
+
+  shown.forEach((b, i) => {
+    const x = (i + 1) * brickW;
+    const y = baseY + levels[i] * brickH;
+    ctx.fillStyle = b.direction === 1 ? 'rgba(0,217,100,0.85)' : 'rgba(255,59,48,0.85)';
+    ctx.strokeStyle = b.direction === 1 ? '#00d964' : '#ff3b30';
+    ctx.fillRect(x, y, brickW * 0.8, brickH * 0.9);
+    ctx.strokeRect(x, y, brickW * 0.8, brickH * 0.9);
+  });
+}
+
+async function loadBricks() {
+  const res = await fetch('/api/bricks');
+  const data = await res.json();
+  const bricks = data.bricks || [];
+
+  document.getElementById('box-size').textContent = data.box_size;
+  document.getElementById('brick-count-legend').textContent = `${bricks.length} bricks stored`;
+
+  if (bricks.length) {
+    const last = bricks[bricks.length - 1];
+    document.getElementById('price-now').textContent = last.close.toFixed(5);
+    document.getElementById('price-now').style.color = last.direction === 1 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('price-meta').textContent = `last brick ${timeAgo(last.formed_at)}`;
+  } else {
+    document.getElementById('price-now').textContent = '--';
+    document.getElementById('price-meta').textContent = 'no data yet';
+  }
+
+  drawBricks(bricks, data.box_size);
+}
+
+const scanBtn = document.getElementById('scan-now-btn');
+scanBtn.addEventListener('click', async () => {
+  scanBtn.disabled = true;
+  scanBtn.textContent = 'SCANNING...';
+  const statusEl = document.getElementById('scan-status');
+  try {
+    const res = await fetch('/api/scan-now', { method: 'POST' });
+    const result = await res.json();
+    if (result.error) {
+      statusEl.textContent = `STATUS: ERROR — ${result.error}`;
+    } else {
+      statusEl.textContent = `STATUS: OK — ${result.new_bricks} new brick(s)`;
+    }
+  } catch (e) {
+    statusEl.textContent = 'STATUS: REQUEST FAILED';
+  }
+  await loadBricks();
+  scanBtn.disabled = false;
+  scanBtn.textContent = 'SCAN NOW';
+});
+
+window.addEventListener('resize', loadBricks);
+loadBricks();

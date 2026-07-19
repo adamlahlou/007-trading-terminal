@@ -1,0 +1,73 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg: #060605;
+  --panel: #0d0d0b;
+  --line: #2a2a24;
+  --amber: #ffb000;
+  --amber-dim: #7a5600;
+  --white: #eae6da;
+  --dim: #77756b;
+  --green: #00d964;
+  --green-dim: #0a4a28;
+  --red: #ff3b30;
+  --red-dim: #4a1410;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--white);
+  font-family: 'IBM Plex Mono', monospace;
+  -webkit-font-smoothing: antialiased;
+}
+body { padding: 10px; min-height: 100vh; }
+.frame {
+  border: 1px solid var(--line);
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.brand {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: var(--amber);
+}
+.brand span { color: var(--dim); font-weight: 400; margin-left: 8px; font-size: 11px; letter-spacing: 0.05em; }
+.topbar-right { display:flex; align-items:center; gap:22px; font-size: 12px; color: var(--dim); }
+.topbar-right .clock { color: var(--white); font-weight:500; }
+.topbar-right .live-dot { width:6px; height:6px; border-radius:50%; background:var(--green); display:inline-block; margin-right:6px; box-shadow:0 0 0 2px var(--green-dim); }
+
+.chart-panel { padding: 14px 16px 10px; }
+.panel-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px; }
+.panel-title { font-size:12px; letter-spacing:0.08em; color: var(--dim); font-weight:600; }
+.panel-title b { color: var(--amber); }
+.price-now { font-size: 20px; font-weight: 600; color: var(--white); }
+.price-meta { font-size: 11px; color: var(--dim); }
+canvas { display:block; width:100%; height:420px; }
+.legend { display:flex; justify-content:space-between; font-size:11px; color:var(--dim); margin-top:8px; }
+.legend > div:first-child { display:flex; gap:18px; }
+.legend i { display:inline-block; width:9px; height:9px; margin-right:5px; vertical-align:-1px; }
+
+.statusbar {
+  display:flex; justify-content:space-between; align-items:center; padding:8px 16px;
+  border-top:1px solid var(--line); background: var(--panel);
+  font-size: 10px; color: var(--dim); letter-spacing:0.03em;
+}
+.statusbar b { color: var(--amber); }
+#scan-now-btn {
+  background: #000; border: 1px solid var(--amber-dim); color: var(--amber);
+  font-family: inherit; font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
+  padding: 5px 12px; cursor: pointer;
+}
+#scan-now-btn:hover { border-color: var(--amber); }
+#scan-now-btn:disabled { opacity: 0.5; cursor: default; }

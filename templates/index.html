@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>007 Trading Terminal</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand">007 TRADING TERMINAL<span id="brand-sub">GBPUSD · RENKO</span></div>
+    <div class="topbar-right">
+      <div><span class="live-dot"></span>LIVE</div>
+      <div class="clock" id="clock">--:--:--</div>
+    </div>
+  </div>
+
+  <div class="chart-panel">
+    <div class="panel-head">
+      <div class="panel-title"><b>GBP/USD</b> — RENKO (<span id="box-size">--</span> BOX)</div>
+      <div style="text-align:right;">
+        <div class="price-now" id="price-now">--</div>
+        <div class="price-meta" id="price-meta">no data yet</div>
+      </div>
+    </div>
+    <canvas id="renko"></canvas>
+    <div class="legend">
+      <div><i style="background:var(--green)"></i>Up brick</div>
+      <div><i style="background:var(--red)"></i>Down brick</div>
+      <div id="brick-count-legend">0 bricks stored</div>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <div>SOURCE: <b>OANDA</b> · GRANULARITY: <b>30M</b> · METHOD: <b>TRADITIONAL</b></div>
+    <div style="display:flex; align-items:center; gap:14px;">
+      <span id="scan-status">STATUS: NOMINAL</span>
+      <button id="scan-now-btn">SCAN NOW</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
