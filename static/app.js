@@ -35,12 +35,14 @@ function drawBricks(bricks, boxSize) {
     return;
   }
 
-  // How many bricks fit comfortably
-  const maxBricks = Math.max(10, Math.floor(w / 14));
+  const padding = 24;
+  const usableW = w - padding * 2;
+  const maxBricks = Math.max(8, Math.floor(usableW / 30));
   const shown = bricks.slice(-maxBricks);
 
-  const brickW = w / (shown.length + 2);
-  const brickH = Math.min(h / 16, 26);
+  const slotW = usableW / shown.length;
+  const brickW = Math.min(slotW * 0.72, 26);
+  const brickH = Math.min(h / 16, 24);
 
   // compute vertical levels (cumulative step per brick)
   let level = 0;
@@ -53,13 +55,21 @@ function drawBricks(bricks, boxSize) {
   const span = (maxLevel - minLevel + 2) * brickH;
   const baseY = (h - span) / 2 + (maxLevel + 1) * brickH;
 
+  const green = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+  const red = getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+  const greenDim = getComputedStyle(document.documentElement).getPropertyValue('--green-dim').trim();
+  const redDim = getComputedStyle(document.documentElement).getPropertyValue('--red-dim').trim();
+
   shown.forEach((b, i) => {
-    const x = (i + 1) * brickW;
+    const x = padding + i * slotW + (slotW - brickW) / 2;
     const y = baseY + levels[i] * brickH;
-    ctx.fillStyle = b.direction === 1 ? 'rgba(0,217,100,0.85)' : 'rgba(255,59,48,0.85)';
-    ctx.strokeStyle = b.direction === 1 ? '#00d964' : '#ff3b30';
-    ctx.fillRect(x, y, brickW * 0.8, brickH * 0.9);
-    ctx.strokeRect(x, y, brickW * 0.8, brickH * 0.9);
+    const color = b.direction === 1 ? green : red;
+    const dimColor = b.direction === 1 ? greenDim : redDim;
+    ctx.fillStyle = dimColor;
+    ctx.fillRect(x, y, brickW, brickH * 0.9);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, y, brickW, brickH * 0.9);
   });
 }
 
