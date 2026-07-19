@@ -52,8 +52,8 @@ function drawBricks(bricks, boxSize) {
 
   const slotW = usableW / shown.length;
   const brickW = Math.min(slotW * 0.68, 26);
-  const brickH = Math.min(h / 16, 24);
   const radius = 4;
+  const vPad = 20;
 
   // compute vertical levels (cumulative step per brick)
   let level = 0;
@@ -63,15 +63,16 @@ function drawBricks(bricks, boxSize) {
   });
   const minLevel = Math.min(...levels, 0);
   const maxLevel = Math.max(...levels, 0);
-  const span = (maxLevel - minLevel + 2) * brickH;
-  const baseY = (h - span) / 2 + (maxLevel + 1) * brickH;
+  const numRows = maxLevel - minLevel + 1;
+  const brickH = Math.min(28, (h - vPad * 2) / numRows);
+  const yFor = (lvl) => vPad + (maxLevel - lvl) * brickH;
 
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
   const blue = getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
-    const y = baseY + levels[i] * brickH;
+    const y = yFor(levels[i]);
     const bh = brickH * 0.9;
 
     roundedRectPath(ctx, x, y, brickW, bh, radius);
