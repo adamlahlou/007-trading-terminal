@@ -24,7 +24,12 @@ function roundedRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawBricks(bricks, boxSize) {
+// Shared state, updated independently by the bricks load (30min-ish) and
+// the live price poll (every 3s) -- drawBricks() is re-run after either changes.
+let state = { bricks: [], boxSize: 0.0022, livePrice: null };
+
+function drawBricks() {
+  const { bricks, livePrice } = state;
   const canvas = document.getElementById('renko');
   const ratio = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -33,7 +38,6 @@ function drawBricks(bricks, boxSize) {
   ctx.scale(ratio, ratio);
   ctx.clearRect(0, 0, w, h);
 
-  // background grid
   ctx.strokeStyle = '#1c1c17';
   ctx.lineWidth = 1;
   for (let y = 0; y < h; y += h / 8) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
@@ -55,20 +59,21 @@ function drawBricks(bricks, boxSize) {
   const radius = 4;
   const vPad = 20;
 
-  // compute vertical levels (cumulative step per brick)
   let level = 0;
   const levels = shown.map((b) => {
     level += b.direction === 1 ? -1 : 1;
     return level;
   });
-  const minLevel = Math.min(...levels, 0);
-  const maxLevel = Math.max(...levels, 0);
+
+  // Reserve half a row of headroom on both ends so the pending ghost bar
+  // (which can sit half a level beyond the last brick) never clips.
+  const minLevel = Math.min(...levels, 0) - 0.5;
+  const maxLevel = Math.max(...levels, 0) + 0.5;
   const numRows = maxLevel - minLevel + 1;
   const brickH = Math.min(28, (h - vPad * 2) / numRows);
   const yFor = (lvl) => vPad + (maxLevel - lvl) * brickH;
 
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
-  const blue = getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
@@ -77,24 +82,51 @@ function drawBricks(bricks, boxSize) {
 
     roundedRectPath(ctx, x, y, brickW, bh, radius);
     if (b.direction === 1) {
-      // up brick: hollow, white outline, faint blue tint
       ctx.fillStyle = 'rgba(74,154,232,0.14)';
       ctx.fill();
       ctx.strokeStyle = white;
       ctx.lineWidth = 1.5;
       ctx.stroke();
     } else {
-      // down brick: solid white block
       ctx.fillStyle = white;
       ctx.fill();
     }
   });
+
+  // Pending "ghost" bar: shows whether live price is currently above or
+  // below the last confirmed brick's close, since it takes a full box move
+  // to actually form the next brick. Half-height, faint, in the next slot.
+  if (livePrice != null) {
+    const lastBrick = shown[shown.length - 1];
+    const lastLevel = levels[levels.length - 1];
+    const diff = livePrice - lastBrick.close;
+    const pendingUp = diff >= 0;
+    const pendingLevel = lastLevel + (pendingUp ? -0.5 : 0.5);
+
+    const x = padding + shown.length * slotW + (slotW - brickW) / 2;
+    const yStart = yFor(lastLevel);
+    const yEnd = yFor(pendingLevel);
+    const top = Math.min(yStart, yEnd);
+    const barH = Math.abs(yEnd - yStart);
+
+    roundedRectPath(ctx, x, top, brickW, barH, radius);
+    ctx.fillStyle = pendingUp ? 'rgba(74,154,232,0.10)' : 'rgba(234,230,218,0.10)';
+    ctx.fill();
+    ctx.strokeStyle = pendingUp ? 'rgba(255,255,255,0.35)' : 'rgba(234,230,218,0.35)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 }
 
 async function loadBricks() {
   const res = await fetch('/api/bricks');
   const data = await res.json();
   const bricks = data.bricks || [];
+
+  state.bricks = bricks;
+  state.boxSize = data.box_size;
 
   document.getElementById('box-size').textContent = data.box_size;
   document.getElementById('brick-count-legend').textContent = `${bricks.length} bricks stored`;
@@ -109,7 +141,7 @@ async function loadBricks() {
     document.getElementById('price-meta').textContent = 'no data yet';
   }
 
-  drawBricks(bricks, data.box_size);
+  drawBricks();
 }
 
 const scanBtn = document.getElementById('scan-now-btn');
@@ -140,15 +172,19 @@ async function pollLivePrice() {
     const data = await res.json();
     if (data.error) {
       el.textContent = 'PRICE FEED N/A';
+      state.livePrice = null;
     } else {
       el.textContent = `${data.mid.toFixed(5)} (${data.bid.toFixed(5)}/${data.ask.toFixed(5)})`;
+      state.livePrice = data.mid;
     }
   } catch (e) {
     el.textContent = 'PRICE FEED N/A';
+    state.livePrice = null;
   }
+  drawBricks();
 }
 setInterval(pollLivePrice, 3000);
 pollLivePrice();
 
-window.addEventListener('resize', loadBricks);
+window.addEventListener('resize', drawBricks);
 loadBricks();
