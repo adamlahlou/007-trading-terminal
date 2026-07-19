@@ -18,6 +18,27 @@ BASE_URL = (
 INSTRUMENT = "GBP_USD"
 
 
+def fetch_current_price() -> dict:
+    """
+    Returns {bid, ask, mid, time} for GBP/USD right now. Cheap, single
+    lightweight request -- safe to poll every few seconds without coming
+    anywhere near OANDA's rate limits (which are per-second, not a tiny
+    daily cap).
+    """
+    if not OANDA_API_TOKEN or not OANDA_ACCOUNT_ID:
+        raise RuntimeError("OANDA_API_TOKEN / OANDA_ACCOUNT_ID not set")
+
+    headers = {"Authorization": f"Bearer {OANDA_API_TOKEN}"}
+    url = f"{BASE_URL}/v3/accounts/{OANDA_ACCOUNT_ID}/pricing"
+    resp = requests.get(url, headers=headers, params={"instruments": INSTRUMENT}, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    price = data["prices"][0]
+    bid = float(price["bids"][0]["price"])
+    ask = float(price["asks"][0]["price"])
+    return {"bid": bid, "ask": ask, "mid": round((bid + ask) / 2, 5), "time": price["time"]}
+
+
 def fetch_candles(since: datetime | None = None, count: int = 500, granularity: str = "M30") -> list[dict]:
     """
     Returns a list of {time, open, high, low, close, complete} dicts, oldest first.

@@ -133,5 +133,22 @@ scanBtn.addEventListener('click', async () => {
   scanBtn.textContent = 'SCAN NOW';
 });
 
+async function pollLivePrice() {
+  const el = document.getElementById('live-price');
+  try {
+    const res = await fetch('/api/price');
+    const data = await res.json();
+    if (data.error) {
+      el.textContent = 'PRICE FEED N/A';
+    } else {
+      el.textContent = `${data.mid.toFixed(5)} (${data.bid.toFixed(5)}/${data.ask.toFixed(5)})`;
+    }
+  } catch (e) {
+    el.textContent = 'PRICE FEED N/A';
+  }
+}
+setInterval(pollLivePrice, 3000);
+pollLivePrice();
+
 window.addEventListener('resize', loadBricks);
 loadBricks();

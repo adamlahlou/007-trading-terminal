@@ -42,6 +42,7 @@ body { padding: 10px; min-height: 100vh; }
 .brand span { color: var(--dim); font-weight: 400; margin-left: 8px; font-size: 11px; letter-spacing: 0.05em; }
 .topbar-right { display:flex; align-items:center; gap:22px; font-size: 12px; color: var(--dim); }
 .topbar-right .clock { color: var(--white); font-weight:500; }
+.live-price { color: var(--amber); font-weight:600; font-size:13px; }
 .topbar-right .live-dot { width:6px; height:6px; border-radius:50%; background:var(--blue); display:inline-block; margin-right:6px; box-shadow:0 0 0 2px rgba(74,154,232,0.25); }
 
 .chart-panel { padding: 14px 16px 10px; }

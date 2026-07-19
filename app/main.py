@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
-from . import db
+from . import db, oanda_client
 from .scanner import run_scan, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +48,15 @@ async def dashboard(request: Request):
 @app.get("/api/bricks")
 async def api_bricks():
     return JSONResponse({"box_size": BOX_SIZE, "bricks": db.get_recent_bricks(limit=200)})
+
+
+@app.get("/api/price")
+async def api_price():
+    try:
+        price = await asyncio.to_thread(oanda_client.fetch_current_price)
+        return JSONResponse(price)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
 
 
 @app.post("/api/scan-now")
