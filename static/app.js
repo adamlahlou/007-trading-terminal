@@ -14,6 +14,16 @@ function timeAgo(isoString) {
   return `${Math.floor(diffHr / 24)}d ago`;
 }
 
+function roundedRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 function drawBricks(bricks, boxSize) {
   const canvas = document.getElementById('renko');
   const ratio = window.devicePixelRatio || 1;
@@ -37,12 +47,13 @@ function drawBricks(bricks, boxSize) {
 
   const padding = 24;
   const usableW = w - padding * 2;
-  const maxBricks = Math.max(8, Math.floor(usableW / 30));
+  const maxBricks = Math.max(8, Math.floor(usableW / 32));
   const shown = bricks.slice(-maxBricks);
 
   const slotW = usableW / shown.length;
-  const brickW = Math.min(slotW * 0.72, 26);
+  const brickW = Math.min(slotW * 0.68, 26);
   const brickH = Math.min(h / 16, 24);
+  const radius = 4;
 
   // compute vertical levels (cumulative step per brick)
   let level = 0;
@@ -55,21 +66,27 @@ function drawBricks(bricks, boxSize) {
   const span = (maxLevel - minLevel + 2) * brickH;
   const baseY = (h - span) / 2 + (maxLevel + 1) * brickH;
 
-  const green = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
-  const red = getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
-  const greenDim = getComputedStyle(document.documentElement).getPropertyValue('--green-dim').trim();
-  const redDim = getComputedStyle(document.documentElement).getPropertyValue('--red-dim').trim();
+  const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
+  const blue = getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
     const y = baseY + levels[i] * brickH;
-    const color = b.direction === 1 ? green : red;
-    const dimColor = b.direction === 1 ? greenDim : redDim;
-    ctx.fillStyle = dimColor;
-    ctx.fillRect(x, y, brickW, brickH * 0.9);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(x, y, brickW, brickH * 0.9);
+    const bh = brickH * 0.9;
+
+    roundedRectPath(ctx, x, y, brickW, bh, radius);
+    if (b.direction === 1) {
+      // up brick: hollow, white outline, faint blue tint
+      ctx.fillStyle = 'rgba(74,154,232,0.14)';
+      ctx.fill();
+      ctx.strokeStyle = white;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    } else {
+      // down brick: solid white block
+      ctx.fillStyle = white;
+      ctx.fill();
+    }
   });
 }
 
@@ -84,7 +101,7 @@ async function loadBricks() {
   if (bricks.length) {
     const last = bricks[bricks.length - 1];
     document.getElementById('price-now').textContent = last.close.toFixed(5);
-    document.getElementById('price-now').style.color = last.direction === 1 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('price-now').style.color = last.direction === 1 ? 'var(--blue)' : 'var(--white)';
     document.getElementById('price-meta').textContent = `last brick ${timeAgo(last.formed_at)}`;
   } else {
     document.getElementById('price-now').textContent = '--';

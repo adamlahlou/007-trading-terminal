@@ -4,3 +4,4 @@ venv/
 .venv/
 terminal.db
 .env
+.DS_Store
