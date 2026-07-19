@@ -51,10 +51,11 @@ function drawBricks() {
 
   const padding = 24;
   const usableW = w - padding * 2;
-  const maxBricks = Math.max(8, Math.floor(usableW / 32));
+  const maxBricks = Math.max(8, Math.floor(usableW / 32) - 1);
   const shown = bricks.slice(-maxBricks);
 
-  const slotW = usableW / shown.length;
+  // +1 slot reserved for the pending ghost bar, so it's always on-canvas
+  const slotW = usableW / (shown.length + 1);
   const brickW = Math.min(slotW * 0.68, 26);
   const radius = 4;
   const vPad = 20;
@@ -74,6 +75,7 @@ function drawBricks() {
   const yFor = (lvl) => vPad + (maxLevel - lvl) * brickH;
 
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
+  const blue = getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
@@ -81,16 +83,8 @@ function drawBricks() {
     const bh = brickH * 0.9;
 
     roundedRectPath(ctx, x, y, brickW, bh, radius);
-    if (b.direction === 1) {
-      ctx.fillStyle = 'rgba(74,154,232,0.14)';
-      ctx.fill();
-      ctx.strokeStyle = white;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    } else {
-      ctx.fillStyle = white;
-      ctx.fill();
-    }
+    ctx.fillStyle = b.direction === 1 ? blue : white;
+    ctx.fill();
   });
 
   // Pending "ghost" bar: shows whether live price is currently above or
@@ -110,9 +104,9 @@ function drawBricks() {
     const barH = Math.abs(yEnd - yStart);
 
     roundedRectPath(ctx, x, top, brickW, barH, radius);
-    ctx.fillStyle = pendingUp ? 'rgba(74,154,232,0.10)' : 'rgba(234,230,218,0.10)';
+    ctx.fillStyle = pendingUp ? 'rgba(31,111,235,0.18)' : 'rgba(234,230,218,0.14)';
     ctx.fill();
-    ctx.strokeStyle = pendingUp ? 'rgba(255,255,255,0.35)' : 'rgba(234,230,218,0.35)';
+    ctx.strokeStyle = pendingUp ? 'rgba(31,111,235,0.55)' : 'rgba(234,230,218,0.4)';
     ctx.lineWidth = 1;
     ctx.setLineDash([2, 2]);
     ctx.stroke();
