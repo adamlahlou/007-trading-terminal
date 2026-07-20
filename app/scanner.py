@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from . import db, oanda_client
+from . import db, oanda_client, finnhub_client
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -49,3 +49,10 @@ def run_scan() -> dict:
         "new_bricks": len(all_new_bricks),
         "total_bricks": db.get_brick_count(),
     }
+
+
+def run_calendar_refresh() -> dict:
+    events = finnhub_client.fetch_calendar()
+    db.replace_calendar_events(events)
+    logger.info(f"Calendar refresh: {len(events)} relevant events cached")
+    return {"events_cached": len(events)}

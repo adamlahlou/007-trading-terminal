@@ -37,6 +37,20 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS calendar_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_time TEXT NOT NULL,
+            country TEXT NOT NULL,
+            event TEXT NOT NULL,
+            impact TEXT NOT NULL,
+            actual TEXT,
+            estimate TEXT,
+            prev TEXT
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -110,3 +124,43 @@ def get_brick_count() -> int:
     row = conn.execute("SELECT COUNT(*) AS c FROM bricks").fetchone()
     conn.close()
     return row["c"]
+
+
+def replace_calendar_events(events: list[dict]):
+    """Wipes and replaces the calendar cache with a fresh fetch (it's a
+    rolling window of upcoming events, not a historical log)."""
+    conn = get_conn()
+    conn.execute("DELETE FROM calendar_events")
+    conn.executemany(
+        """
+        INSERT INTO calendar_events (event_time, country, event, impact, actual, estimate, prev)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (e["time"], e["country"], e["event"], e["impact"],
+             str(e["actual"]) if e["actual"] is not None else None,
+             str(e["estimate"]) if e["estimate"] is not None else None,
+             str(e["prev"]) if e["prev"] is not None else None)
+            for e in events
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_calendar_events() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM calendar_events ORDER BY event_time ASC").fetchall()
+    conn.close()
+    return [
+        {
+            "time": r["event_time"],
+            "country": r["country"],
+            "event": r["event"],
+            "impact": r["impact"],
+            "actual": r["actual"],
+            "estimate": r["estimate"],
+            "prev": r["prev"],
+        }
+        for r in rows
+    ]

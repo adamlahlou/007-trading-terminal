@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
 from . import db, oanda_client
-from .scanner import run_scan, BOX_SIZE
+from .scanner import run_scan, run_calendar_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("007-terminal")
@@ -22,6 +22,8 @@ async def lifespan(app: FastAPI):
     db.init_db()
     # Every 30 minutes, on the hour and half-hour
     scheduler.add_job(lambda: asyncio.to_thread(run_scan), "cron", minute="0,30", id="thirty_min_scan")
+    # Calendar doesn't change minute to minute -- refresh every 6 hours
+    scheduler.add_job(lambda: asyncio.to_thread(run_calendar_refresh), "cron", hour="*/6", id="calendar_refresh")
     scheduler.start()
 
     async def _startup_scan():
@@ -30,7 +32,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Startup scan failed: {e}")
 
+    async def _startup_calendar():
+        try:
+            await asyncio.to_thread(run_calendar_refresh)
+        except Exception as e:
+            logger.error(f"Startup calendar refresh failed: {e}")
+
     asyncio.create_task(_startup_scan())
+    asyncio.create_task(_startup_calendar())
     yield
     scheduler.shutdown()
 
@@ -78,3 +87,18 @@ async def cron_scan():
     except Exception as e:
         logger.error(f"Scan failed: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+
+
+@app.get("/api/calendar")
+async def api_calendar():
+    return JSONResponse({"events": db.get_calendar_events()})
+
+
+@app.post("/api/calendar-refresh-now")
+async def calendar_refresh_now():
+    try:
+        result = await asyncio.to_thread(run_calendar_refresh)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Calendar refresh failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)

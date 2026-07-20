@@ -185,3 +185,98 @@ pollLivePrice();
 
 window.addEventListener('resize', drawBricks);
 loadBricks();
+
+// ---- Macro calendar ----
+let nextEventTime = null; // Date object for the countdown ticker
+
+function parseEventTime(t) {
+  if (!t) return null;
+  // Finnhub gives "YYYY-MM-DD HH:MM:SS" in UTC, no offset marker
+  const iso = t.includes('T') ? t : t.replace(' ', 'T') + 'Z';
+  return new Date(iso);
+}
+
+function fmtEventTime(t) {
+  const d = parseEventTime(t);
+  if (!d) return '--';
+  return d.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' });
+}
+
+function renderCountdown() {
+  if (!nextEventTime) return;
+  const diff = Math.max(0, Math.floor((nextEventTime.getTime() - Date.now()) / 1000));
+  const d = Math.floor(diff / 86400);
+  const h = Math.floor((diff % 86400) / 3600);
+  const m = Math.floor((diff % 3600) / 60);
+  const s = diff % 60;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v).padStart(2, '0'); };
+  set('cd-d', d); set('cd-h', h); set('cd-m', m); set('cd-s', s);
+}
+setInterval(renderCountdown, 1000);
+
+async function loadCalendar() {
+  const nextBlock = document.getElementById('next-event-block');
+  const listEl = document.getElementById('event-list');
+  try {
+    const res = await fetch('/api/calendar');
+    const data = await res.json();
+    const events = data.events || [];
+    const now = Date.now();
+    const upcoming = events.filter(e => {
+      const t = parseEventTime(e.time);
+      return t && t.getTime() >= now;
+    });
+
+    // Prefer the next high-impact event; fall back to the next event of any impact
+    const nextHigh = upcoming.find(e => e.impact === 'high');
+    const next = nextHigh || upcoming[0];
+
+    if (next) {
+      nextEventTime = parseEventTime(next.time);
+      nextBlock.innerHTML = `
+        <div class="next-event-name">${next.event} <span class="dim-small">(${next.country})</span></div>
+        <div class="next-event-sub">${fmtEventTime(next.time)}${next.estimate ? ` · Forecast ${next.estimate}` : ''}${next.prev ? `, Prior ${next.prev}` : ''}</div>
+        <span class="impact-tag impact-${next.impact}">${next.impact.toUpperCase()} IMPACT</span>
+        <div class="countdown">
+          <div class="cd-box"><div class="cd-num" id="cd-d">00</div><div class="cd-label">DAYS</div></div>
+          <div class="cd-box"><div class="cd-num" id="cd-h">00</div><div class="cd-label">HRS</div></div>
+          <div class="cd-box"><div class="cd-num" id="cd-m">00</div><div class="cd-label">MIN</div></div>
+          <div class="cd-box"><div class="cd-num" id="cd-s">00</div><div class="cd-label">SEC</div></div>
+        </div>
+      `;
+      renderCountdown();
+    } else {
+      nextEventTime = null;
+      nextBlock.innerHTML = `<div class="dim-small">No upcoming US/GB events in the cached window.</div>`;
+    }
+
+    if (events.length) {
+      listEl.innerHTML = events.map(e => `
+        <div class="ev-row">
+          <div class="ev-left"><span class="impact-dot impact-${e.impact}"></span>${e.event} (${e.country})</div>
+          <div class="ev-time">${fmtEventTime(e.time)}</div>
+        </div>
+      `).join('');
+    } else {
+      listEl.innerHTML = `<div class="dim-small">No calendar data cached yet.</div>`;
+    }
+  } catch (e) {
+    nextBlock.innerHTML = `<div class="dim-small">Calendar unavailable: ${e.message}</div>`;
+  }
+}
+
+const calBtn = document.getElementById('calendar-refresh-btn');
+if (calBtn) {
+  calBtn.addEventListener('click', async () => {
+    calBtn.disabled = true;
+    calBtn.textContent = 'REFRESHING...';
+    try {
+      await fetch('/api/calendar-refresh-now', { method: 'POST' });
+    } catch (e) { /* fall through, still reload cache below */ }
+    await loadCalendar();
+    calBtn.disabled = false;
+    calBtn.textContent = 'REFRESH';
+  });
+}
+
+loadCalendar();
