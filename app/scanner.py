@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from . import db, oanda_client, calendar_schedule
+from . import db, oanda_client, calendar_schedule, notifier
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -40,8 +40,10 @@ def run_scan() -> dict:
         all_new_bricks.extend(new_bricks)
         last_candle_time = candle["time"]
 
-    db.append_bricks([{"direction": b.direction, "open": b.open, "close": b.close, "formed_at": b.formed_at} for b in all_new_bricks])
+    brick_dicts = [{"direction": b.direction, "open": b.open, "close": b.close, "formed_at": b.formed_at} for b in all_new_bricks]
+    db.append_bricks(brick_dicts)
     db.save_state(BOX_SIZE, state.anchor, state.last_close, state.direction, last_candle_time)
+    notifier.send_brick_notification(brick_dicts)
 
     logger.info(f"Scan complete: {len(all_new_bricks)} new bricks, {len(candles)} candles processed")
     return {

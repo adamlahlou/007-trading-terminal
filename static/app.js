@@ -75,6 +75,7 @@ function drawBricks() {
   const yFor = (lvl) => vPad + (maxLevel - lvl) * brickH;
 
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
+  const amber = getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
@@ -82,9 +83,20 @@ function drawBricks() {
     const bh = brickH * 0.9;
 
     roundedRectPath(ctx, x, y, brickW, bh, radius);
-    ctx.fillStyle = b.direction === 1 ? 'rgba(31,111,235,0.18)' : 'rgba(234,230,218,0.10)';
-    ctx.fill();
-    ctx.strokeStyle = white;
+    if (b.direction === 1) {
+      // up (bullish): clean gradient-white fill, white outline
+      const grad = ctx.createLinearGradient(x, y, x, y + bh);
+      grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grad.addColorStop(1, 'rgba(234,230,218,0.75)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = white;
+    } else {
+      // down (bearish): blue fill, orange outline -- deliberately distinct
+      ctx.fillStyle = 'rgba(31,111,235,0.18)';
+      ctx.fill();
+      ctx.strokeStyle = amber;
+    }
     ctx.lineWidth = 1.5;
     ctx.stroke();
   });
@@ -106,9 +118,9 @@ function drawBricks() {
     const barH = Math.abs(yEnd - yStart);
 
     roundedRectPath(ctx, x, top, brickW, barH, radius);
-    ctx.fillStyle = pendingUp ? 'rgba(31,111,235,0.18)' : 'rgba(234,230,218,0.14)';
+    ctx.fillStyle = pendingUp ? 'rgba(234,230,218,0.14)' : 'rgba(31,111,235,0.18)';
     ctx.fill();
-    ctx.strokeStyle = pendingUp ? 'rgba(31,111,235,0.55)' : 'rgba(234,230,218,0.4)';
+    ctx.strokeStyle = pendingUp ? 'rgba(234,230,218,0.5)' : 'rgba(255,176,0,0.55)';
     ctx.lineWidth = 1;
     ctx.setLineDash([2, 2]);
     ctx.stroke();
@@ -130,7 +142,7 @@ async function loadBricks() {
   if (bricks.length) {
     const last = bricks[bricks.length - 1];
     document.getElementById('price-now').textContent = last.close.toFixed(5);
-    document.getElementById('price-now').style.color = last.direction === 1 ? 'var(--blue)' : 'var(--white)';
+    document.getElementById('price-now').style.color = last.direction === 1 ? 'var(--white)' : 'var(--blue)';
     document.getElementById('price-meta').textContent = `last brick ${timeAgo(last.formed_at)}`;
   } else {
     document.getElementById('price-now').textContent = '--';
