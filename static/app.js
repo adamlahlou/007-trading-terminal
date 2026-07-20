@@ -72,7 +72,7 @@ function drawBricks() {
   const maxLevel = Math.max(...levels, 0) + 0.5;
   const numRows = maxLevel - minLevel + 1;
   const brickH = Math.min(28, (h - vPad * 2) / numRows);
-  const yFor = (lvl) => vPad + (maxLevel - lvl) * brickH;
+  const yFor = (lvl) => vPad + (lvl - minLevel) * brickH;
 
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
   const amber = getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
