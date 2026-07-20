@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from . import db, oanda_client, fmp_client
+from . import db, oanda_client, calendar_schedule
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -52,7 +52,7 @@ def run_scan() -> dict:
 
 
 def run_calendar_refresh() -> dict:
-    events = fmp_client.fetch_calendar()
+    events = calendar_schedule.fetch_calendar(days_ahead=45, days_behind=1)
     db.replace_calendar_events(events)
-    logger.info(f"Calendar refresh: {len(events)} relevant events cached")
+    logger.info(f"Calendar refresh: {len(events)} events cached")
     return {"events_cached": len(events)}
