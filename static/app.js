@@ -75,7 +75,6 @@ function drawBricks() {
   const yFor = (lvl) => vPad + (maxLevel - lvl) * brickH;
 
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
-  const blue = getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
@@ -83,8 +82,11 @@ function drawBricks() {
     const bh = brickH * 0.9;
 
     roundedRectPath(ctx, x, y, brickW, bh, radius);
-    ctx.fillStyle = b.direction === 1 ? blue : white;
+    ctx.fillStyle = b.direction === 1 ? 'rgba(31,111,235,0.18)' : 'rgba(234,230,218,0.10)';
     ctx.fill();
+    ctx.strokeStyle = white;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
   });
 
   // Pending "ghost" bar: shows whether live price is currently above or
@@ -161,18 +163,19 @@ scanBtn.addEventListener('click', async () => {
 
 async function pollLivePrice() {
   const el = document.getElementById('live-price');
+  if (!el) { console.error('live-price element not found in DOM'); return; }
   try {
     const res = await fetch('/api/price');
     const data = await res.json();
     if (data.error) {
-      el.textContent = 'PRICE FEED N/A';
+      el.textContent = `N/A: ${data.error}`;
       state.livePrice = null;
     } else {
       el.textContent = `${data.mid.toFixed(5)} (${data.bid.toFixed(5)}/${data.ask.toFixed(5)})`;
       state.livePrice = data.mid;
     }
   } catch (e) {
-    el.textContent = 'PRICE FEED N/A';
+    el.textContent = `N/A: ${e.message}`;
     state.livePrice = null;
   }
   drawBricks();
