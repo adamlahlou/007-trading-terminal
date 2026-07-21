@@ -29,7 +29,7 @@ function roundedRectPath(ctx, x, y, w, h, r) {
 let state = { bricks: [], boxSize: 0.0022, livePrice: null };
 
 function drawBricks() {
-  const { bricks, livePrice } = state;
+  const { bricks, livePrice, boxSize } = state;
   const canvas = document.getElementById('renko');
   const ratio = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -38,9 +38,12 @@ function drawBricks() {
   ctx.scale(ratio, ratio);
   ctx.clearRect(0, 0, w, h);
 
+  const priceGutter = 54; // right-side space reserved for the price axis
+  const gridEndX = w - priceGutter;
+
   ctx.strokeStyle = '#1c1c17';
   ctx.lineWidth = 1;
-  for (let y = 0; y < h; y += h / 8) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+  for (let y = 0; y < h; y += h / 8) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(gridEndX, y); ctx.stroke(); }
 
   if (!bricks.length) {
     ctx.fillStyle = '#77756b';
@@ -50,7 +53,7 @@ function drawBricks() {
   }
 
   const padding = 24;
-  const usableW = w - padding * 2;
+  const usableW = (w - priceGutter) - padding * 2;
   const maxBricks = Math.max(8, Math.floor(usableW / 32) - 1);
   const shown = bricks.slice(-maxBricks);
 
@@ -77,6 +80,21 @@ function drawBricks() {
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
   const amber = getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
   const dim = getComputedStyle(document.documentElement).getPropertyValue('--dim').trim();
+
+  // ---- Price axis: label each gridline with the real price it represents ----
+  if (boxSize && shown.length) {
+    const lastLevel = levels[levels.length - 1];
+    const lastClose = shown[shown.length - 1].close;
+    ctx.fillStyle = dim;
+    ctx.font = "10px 'IBM Plex Mono', monospace";
+    ctx.textAlign = 'left';
+    for (let y = 0; y < h; y += h / 8) {
+      const lvlAtY = minLevel + (y - vPad) / brickH;
+      const priceAtY = lastClose - (lvlAtY - lastLevel) * boxSize;
+      ctx.fillText(priceAtY.toFixed(4), gridEndX + 6, y + 3);
+    }
+  }
+
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;

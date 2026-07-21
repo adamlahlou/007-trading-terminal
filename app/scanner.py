@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client
 from .renko import RenkoState, process_candle
@@ -9,6 +10,12 @@ logger = logging.getLogger("007-terminal")
 
 BOX_SIZE = float(os.environ.get("BOX_SIZE", "0.0022"))
 
+# Prevents overlapping scans -- e.g. a cold-start wake-up triggering both the
+# startup task and the /api/cron/scan endpoint's own scan nearly
+# simultaneously, which could otherwise double-process the same candles and
+# send duplicate email alerts for the same brick.
+_scan_lock = threading.Lock()
+
 
 def _parse_time(t: str) -> datetime:
     # OANDA times look like "2026-07-19T14:30:00.000000000Z"
@@ -16,6 +23,16 @@ def _parse_time(t: str) -> datetime:
 
 
 def run_scan() -> dict:
+    if not _scan_lock.acquire(blocking=False):
+        logger.info("Scan already in progress, skipping this trigger")
+        return {"skipped": True, "reason": "scan already in progress"}
+    try:
+        return _run_scan_locked()
+    finally:
+        _scan_lock.release()
+
+
+def _run_scan_locked() -> dict:
     saved = db.load_state(BOX_SIZE)
     state = RenkoState(
         box_size=BOX_SIZE,
