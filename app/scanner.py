@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from . import db, oanda_client, calendar_schedule, notifier
+from . import db, oanda_client, calendar_schedule, notifier, fred_client
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -58,3 +58,15 @@ def run_calendar_refresh() -> dict:
     db.replace_calendar_events(events)
     logger.info(f"Calendar refresh: {len(events)} events cached")
     return {"events_cached": len(events)}
+
+
+def run_yield_refresh() -> dict:
+    result = fred_client.fetch_yield_differential()
+    now = datetime.now(timezone.utc).isoformat()
+    db.save_yield_state(
+        result["us_yield"], result["us_date"],
+        result["uk_yield"], result["uk_date"],
+        result["spread"], now,
+    )
+    logger.info(f"Yield refresh: US {result['us_yield']}%, UK {result['uk_yield']}%, spread {result['spread']}")
+    return result

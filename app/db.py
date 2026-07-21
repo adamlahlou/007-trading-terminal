@@ -51,6 +51,19 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS yield_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            us_yield REAL NOT NULL,
+            us_date TEXT NOT NULL,
+            uk_yield REAL NOT NULL,
+            uk_date TEXT NOT NULL,
+            spread REAL NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -164,3 +177,29 @@ def get_calendar_events() -> list[dict]:
         }
         for r in rows
     ]
+
+
+def save_yield_state(us_yield, us_date, uk_yield, uk_date, spread, updated_at):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO yield_state (id, us_yield, us_date, uk_yield, uk_date, spread, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            us_yield=excluded.us_yield, us_date=excluded.us_date,
+            uk_yield=excluded.uk_yield, uk_date=excluded.uk_date,
+            spread=excluded.spread, updated_at=excluded.updated_at
+        """,
+        (us_yield, us_date, uk_yield, uk_date, spread, updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_yield_state() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM yield_state WHERE id = 1").fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return dict(row)

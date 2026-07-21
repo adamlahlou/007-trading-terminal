@@ -292,3 +292,58 @@ if (calBtn) {
 }
 
 loadCalendar();
+
+// ---- Yield differential / temperament gauge ----
+// Normalization: +-1.5 percentage points of spread maps to the full gauge
+// width. This is a simple, transparent heuristic (not a calibrated model) --
+// wide enough that normal spread movement doesn't peg the gauge every day,
+// narrow enough that a real dislocation (like a gilt crisis) shows clearly.
+const GAUGE_CLAMP = 1.5;
+
+async function loadYields() {
+  const body = document.getElementById('gauge-body');
+  try {
+    const res = await fetch('/api/yields');
+    const d = await res.json();
+    if (!d || d.spread === undefined) {
+      body.innerHTML = `<div class="dim-small">No yield data yet.</div>`;
+      return;
+    }
+
+    const clamped = Math.max(-GAUGE_CLAMP, Math.min(GAUGE_CLAMP, d.spread));
+    const pct = 50 + (clamped / GAUGE_CLAMP) * 50;
+
+    let label, labelColor;
+    if (d.spread > 0.3) { label = 'Leaning bullish (GBP)'; labelColor = '#ffffff'; }
+    else if (d.spread < -0.3) { label = 'Leaning bearish (GBP)'; labelColor = 'var(--blue)'; }
+    else { label = 'Neutral'; labelColor = 'var(--amber)'; }
+
+    body.innerHTML = `
+      <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
+      <div class="gauge-labels"><span>BEARISH (GBP)</span><span>NEUTRAL</span><span>BULLISH (GBP)</span></div>
+      <div class="gauge-read" style="color:${labelColor}">${label} · spread ${d.spread > 0 ? '+' : ''}${d.spread.toFixed(3)}</div>
+      <div class="gauge-numbers">
+        <div>US 10Y: <b>${d.us_yield.toFixed(3)}%</b> <span class="dim-small">(${d.us_date})</span></div>
+        <div>UK 10Y: <b>${d.uk_yield.toFixed(3)}%</b> <span class="dim-small">(${d.uk_date})</span></div>
+      </div>
+    `;
+  } catch (e) {
+    body.innerHTML = `<div class="dim-small">Yield data unavailable: ${e.message}</div>`;
+  }
+}
+
+const yieldsBtn = document.getElementById('yields-refresh-btn');
+if (yieldsBtn) {
+  yieldsBtn.addEventListener('click', async () => {
+    yieldsBtn.disabled = true;
+    yieldsBtn.textContent = 'REFRESHING...';
+    try {
+      await fetch('/api/yields-refresh-now', { method: 'POST' });
+    } catch (e) { /* fall through, still reload cache below */ }
+    await loadYields();
+    yieldsBtn.disabled = false;
+    yieldsBtn.textContent = 'REFRESH';
+  });
+}
+
+loadYields();
