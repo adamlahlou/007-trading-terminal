@@ -1,6 +1,7 @@
 from __future__ import annotations
 import sqlite3
 import os
+import json
 
 DB_PATH = os.environ.get("SCANNER_DB_PATH", os.path.join(os.path.dirname(__file__), "..", "terminal.db"))
 
@@ -60,6 +61,17 @@ def init_db():
             uk_yield REAL NOT NULL,
             uk_date TEXT NOT NULL,
             spread REAL NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS news_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            score REAL NOT NULL,
+            article_count INTEGER NOT NULL,
+            headlines_json TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
@@ -203,3 +215,33 @@ def get_yield_state() -> dict | None:
     if row is None:
         return None
     return dict(row)
+
+
+def save_news_state(score, article_count, headlines, updated_at):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO news_state (id, score, article_count, headlines_json, updated_at)
+        VALUES (1, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            score=excluded.score, article_count=excluded.article_count,
+            headlines_json=excluded.headlines_json, updated_at=excluded.updated_at
+        """,
+        (score, article_count, json.dumps(headlines), updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_news_state() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM news_state WHERE id = 1").fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return {
+        "score": row["score"],
+        "article_count": row["article_count"],
+        "headlines": json.loads(row["headlines_json"]),
+        "updated_at": row["updated_at"],
+    }

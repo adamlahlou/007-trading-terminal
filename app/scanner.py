@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from . import db, oanda_client, calendar_schedule, notifier, fred_client
+from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -69,4 +69,12 @@ def run_yield_refresh() -> dict:
         result["spread"], now,
     )
     logger.info(f"Yield refresh: US {result['us_yield']}%, UK {result['uk_yield']}%, spread {result['spread']}")
+    return result
+
+
+def run_news_refresh() -> dict:
+    result = marketaux_client.fetch_news_sentiment()
+    now = datetime.now(timezone.utc).isoformat()
+    db.save_news_state(result["score"], result["article_count"], result["headlines"], now)
+    logger.info(f"News refresh: score {result['score']} across {result['article_count']} articles")
     return result

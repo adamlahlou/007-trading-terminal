@@ -347,3 +347,66 @@ if (yieldsBtn) {
 }
 
 loadYields();
+
+// ---- News sentiment gauge ----
+function sentimentColor(score) {
+  if (score === null || score === undefined) return 'var(--dim)';
+  if (score > 0.15) return 'var(--white)';
+  if (score < -0.15) return 'var(--blue)';
+  return 'var(--amber)';
+}
+
+async function loadNewsGauge() {
+  const body = document.getElementById('news-gauge-body');
+  const headlinesEl = document.getElementById('news-headlines');
+  try {
+    const res = await fetch('/api/news');
+    const d = await res.json();
+    if (!d || d.score === undefined) {
+      body.innerHTML = `<div class="dim-small">No news data yet.</div>`;
+      headlinesEl.innerHTML = '';
+      return;
+    }
+
+    const pct = 50 + Math.max(-1, Math.min(1, d.score)) * 50;
+    let label = 'Neutral';
+    if (d.score > 0.15) label = 'Leaning positive';
+    else if (d.score < -0.15) label = 'Leaning negative';
+
+    body.innerHTML = `
+      <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
+      <div class="gauge-labels"><span>NEGATIVE</span><span>NEUTRAL</span><span>POSITIVE</span></div>
+      <div class="gauge-read" style="color:${sentimentColor(d.score)}">${label} · ${d.score > 0 ? '+' : ''}${d.score.toFixed(3)} (${d.article_count} articles)</div>
+    `;
+
+    const heads = d.headlines || [];
+    if (heads.length) {
+      headlinesEl.innerHTML = heads.map(h => `
+        <div class="nh-row">
+          <span class="nh-sentiment" style="color:${sentimentColor(h.sentiment)}">${h.sentiment !== null ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--'}</span>
+          <a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>
+        </div>
+      `).join('');
+    } else {
+      headlinesEl.innerHTML = '';
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="dim-small">News data unavailable: ${e.message}</div>`;
+  }
+}
+
+const newsBtn = document.getElementById('news-refresh-btn');
+if (newsBtn) {
+  newsBtn.addEventListener('click', async () => {
+    newsBtn.disabled = true;
+    newsBtn.textContent = 'REFRESHING...';
+    try {
+      await fetch('/api/news-refresh-now', { method: 'POST' });
+    } catch (e) { /* fall through, still reload cache below */ }
+    await loadNewsGauge();
+    newsBtn.disabled = false;
+    newsBtn.textContent = 'REFRESH';
+  });
+}
+
+loadNewsGauge();

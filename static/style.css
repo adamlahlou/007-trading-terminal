@@ -164,3 +164,14 @@ canvas { display:block; width:100%; height:420px; }
   font-family: 'IBM Plex Mono', monospace;
 }
 .gauge-numbers b { color: var(--white); }
+
+/* ---- News sentiment headlines ---- */
+.news-headlines { margin-top: 10px; max-height: 140px; overflow-y: auto; }
+.nh-row {
+  padding: 5px 0; border-bottom: 1px solid var(--line);
+  font-size: 10px; line-height: 1.4;
+}
+.nh-row:last-child { border-bottom: none; }
+.nh-row a { color: var(--white); text-decoration: none; }
+.nh-row a:hover { color: var(--amber); }
+.nh-sentiment { font-family: 'IBM Plex Mono', monospace; margin-right: 6px; }

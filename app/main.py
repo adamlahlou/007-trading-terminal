@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
 from . import db, oanda_client
-from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, BOX_SIZE
+from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("007-terminal")
@@ -26,6 +26,8 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_calendar_refresh), "cron", hour="*/6", id="calendar_refresh")
     # Yields move slowly (UK series is monthly) -- once a day is plenty
     scheduler.add_job(lambda: asyncio.to_thread(run_yield_refresh), "cron", hour="6", id="yield_refresh")
+    # News moves faster -- every 3 hours, well within Marketaux's free 100/day
+    scheduler.add_job(lambda: asyncio.to_thread(run_news_refresh), "cron", hour="*/3", id="news_refresh")
     scheduler.start()
 
     async def _startup_scan():
@@ -46,9 +48,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Startup yield refresh failed: {e}")
 
+    async def _startup_news():
+        try:
+            await asyncio.to_thread(run_news_refresh)
+        except Exception as e:
+            logger.error(f"Startup news refresh failed: {e}")
+
     asyncio.create_task(_startup_scan())
     asyncio.create_task(_startup_calendar())
     asyncio.create_task(_startup_yields())
+    asyncio.create_task(_startup_news())
     yield
     scheduler.shutdown()
 
@@ -126,4 +135,20 @@ async def yields_refresh_now():
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Yield refresh failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/news")
+async def api_news():
+    state = db.get_news_state()
+    return JSONResponse(state or {})
+
+
+@app.post("/api/news-refresh-now")
+async def news_refresh_now():
+    try:
+        result = await asyncio.to_thread(run_news_refresh)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"News refresh failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=502)
