@@ -90,6 +90,19 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS momentum_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            cpi_yoy REAL NOT NULL,
+            cpi_date TEXT NOT NULL,
+            nfp_change REAL NOT NULL,
+            nfp_date TEXT NOT NULL,
+            gauge_score REAL NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -282,6 +295,32 @@ def save_cot_state(report_date, lev_long, lev_short, lev_net, prior_net, gauge_s
 def get_cot_state() -> dict | None:
     conn = get_conn()
     row = conn.execute("SELECT * FROM cot_state WHERE id = 1").fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def save_momentum_state(cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO momentum_state (id, cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            cpi_yoy=excluded.cpi_yoy, cpi_date=excluded.cpi_date,
+            nfp_change=excluded.nfp_change, nfp_date=excluded.nfp_date,
+            gauge_score=excluded.gauge_score, updated_at=excluded.updated_at
+        """,
+        (cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_momentum_state() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM momentum_state WHERE id = 1").fetchone()
     conn.close()
     if row is None:
         return None

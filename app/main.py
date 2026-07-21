@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
 from . import db, oanda_client
-from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, BOX_SIZE
+from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("007-terminal")
@@ -30,6 +30,8 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_news_refresh), "cron", hour="*/3", id="news_refresh")
     # COT only updates weekly (Fridays) -- once a day easily catches it
     scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", hour="7", id="cot_refresh")
+    # NFP/CPI only update monthly -- once a day easily catches it
+    scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
     scheduler.start()
 
     async def _startup_scan():
@@ -62,11 +64,18 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Startup COT refresh failed: {e}")
 
+    async def _startup_momentum():
+        try:
+            await asyncio.to_thread(run_momentum_refresh)
+        except Exception as e:
+            logger.error(f"Startup momentum refresh failed: {e}")
+
     asyncio.create_task(_startup_scan())
     asyncio.create_task(_startup_calendar())
     asyncio.create_task(_startup_yields())
     asyncio.create_task(_startup_news())
     asyncio.create_task(_startup_cot())
+    asyncio.create_task(_startup_momentum())
     yield
     scheduler.shutdown()
 
@@ -176,4 +185,20 @@ async def cot_refresh_now():
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"COT refresh failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/momentum")
+async def api_momentum():
+    state = db.get_momentum_state()
+    return JSONResponse(state or {})
+
+
+@app.post("/api/momentum-refresh-now")
+async def momentum_refresh_now():
+    try:
+        result = await asyncio.to_thread(run_momentum_refresh)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Momentum refresh failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=502)

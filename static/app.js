@@ -558,3 +558,50 @@ if (cotBtn) {
 }
 
 loadCotGauge();
+
+// ---- US data momentum gauge (NFP/CPI) ----
+async function loadMomentumGauge() {
+  const body = document.getElementById('momentum-gauge-body');
+  try {
+    const res = await fetch('/api/momentum');
+    const d = await res.json();
+    if (!d || d.gauge_score === undefined) {
+      body.innerHTML = `<div class="dim-small">No momentum data yet.</div>`;
+      return;
+    }
+
+    const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
+    let label = 'Neutral';
+    let labelColor = 'var(--amber)';
+    if (d.gauge_score > 0.15) { label = 'Cooling US data (GBPUSD supportive)'; labelColor = 'var(--white)'; }
+    else if (d.gauge_score < -0.15) { label = 'Hot US data (USD supportive)'; labelColor = 'var(--blue)'; }
+
+    body.innerHTML = `
+      <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
+      <div class="gauge-labels"><span>HOT (USD+)</span><span>NEUTRAL</span><span>COOL (GBP+)</span></div>
+      <div class="gauge-read" style="color:${labelColor}">${label}</div>
+      <div class="gauge-numbers">
+        <div>CPI YoY: <b>${d.cpi_yoy}%</b> <span class="dim-small">(${d.cpi_date})</span></div>
+        <div>NFP: <b>${d.nfp_change > 0 ? '+' : ''}${d.nfp_change}k</b> <span class="dim-small">(${d.nfp_date})</span></div>
+      </div>
+    `;
+  } catch (e) {
+    body.innerHTML = `<div class="dim-small">Momentum data unavailable: ${e.message}</div>`;
+  }
+}
+
+const momentumBtn = document.getElementById('momentum-refresh-btn');
+if (momentumBtn) {
+  momentumBtn.addEventListener('click', async () => {
+    momentumBtn.disabled = true;
+    momentumBtn.textContent = 'REFRESHING...';
+    try {
+      await fetch('/api/momentum-refresh-now', { method: 'POST' });
+    } catch (e) { /* fall through, still reload cache below */ }
+    await loadMomentumGauge();
+    momentumBtn.disabled = false;
+    momentumBtn.textContent = 'REFRESH';
+  });
+}
+
+loadMomentumGauge();

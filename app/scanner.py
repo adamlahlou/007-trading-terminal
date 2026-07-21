@@ -106,3 +106,15 @@ def run_cot_refresh() -> dict:
     )
     logger.info(f"COT refresh: report {result['report_date']}, lev net {result['lev_net']}, gauge {result['gauge_score']}")
     return result
+
+
+def run_momentum_refresh() -> dict:
+    result = fred_client.fetch_data_momentum()
+    now = datetime.now(timezone.utc).isoformat()
+    db.save_momentum_state(
+        result["cpi_yoy"], result["cpi_date"],
+        result["nfp_change"], result["nfp_date"],
+        result["gauge_score"], now,
+    )
+    logger.info(f"Momentum refresh: CPI YoY {result['cpi_yoy']}%, NFP change {result['nfp_change']}k, gauge {result['gauge_score']}")
+    return result
