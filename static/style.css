@@ -60,7 +60,7 @@ body { padding: 10px; min-height: 100vh; }
 .price-now { font-size: 20px; font-weight: 600; color: var(--white); }
 .price-meta { font-size: 11px; color: var(--dim); }
 canvas { display:block; width:100%; height:420px; }
-.legend { display:flex; justify-content:flex-end; font-size:11px; color:var(--dim); margin-top:8px; }
+.legend { display:flex; justify-content:flex-end; gap: 18px; font-size:11px; color:var(--dim); margin-top:8px; }
 
 .statusbar {
   display:flex; justify-content:space-between; align-items:center; padding:8px 16px;

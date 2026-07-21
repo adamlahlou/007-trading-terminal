@@ -96,6 +96,11 @@ function drawBricks() {
   }
 
 
+  // Bricks sharing the same formed_at came from the same 30min candle --
+  // i.e. price moved more than one box within a single bar. Worth flagging.
+  const formedAtCounts = {};
+  shown.forEach(b => { formedAtCounts[b.formed_at] = (formedAtCounts[b.formed_at] || 0) + 1; });
+
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
     const y = yFor(levels[i]);
@@ -118,6 +123,14 @@ function drawBricks() {
     }
     ctx.lineWidth = 1.5;
     ctx.stroke();
+
+    // Multi-brick-in-one-candle marker
+    if (formedAtCounts[b.formed_at] > 1) {
+      ctx.fillStyle = '#a855f7';
+      ctx.beginPath();
+      ctx.arc(x + brickW / 2, y - 6, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Label the most recent brick with its actual time, so "how stale is
     // this" is always visible at a glance without reading header text.
