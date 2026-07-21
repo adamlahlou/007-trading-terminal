@@ -16,6 +16,18 @@ BASE_URL = "https://publicreporting.cftc.gov/resource/gpe5-46if.json"
 GBP_CONTRACT_CODE = "096742"  # British Pound futures, CME
 
 
+def _find_field(row: dict, *must_contain: str) -> str:
+    """Finds the actual key in the row whose name contains all the given
+    substrings (case-insensitive). Socrata's real API field names don't
+    always match a naive lowercase of the published CSV headers, so we
+    search rather than assume one exact spelling."""
+    for key in row.keys():
+        low = key.lower()
+        if all(term in low for term in must_contain):
+            return key
+    raise KeyError(f"No field found containing {must_contain}. Available fields: {list(row.keys())}")
+
+
 def fetch_cot_data() -> dict:
     """
     Returns {report_date, lev_long, lev_short, lev_net, prior_net, gauge_score}.
@@ -39,8 +51,12 @@ def fetch_cot_data() -> dict:
         raise RuntimeError("CFTC returned no rows for GBP futures")
 
     latest = rows[0]
-    lev_long = float(latest["lev_money_positions_long_all"])
-    lev_short = float(latest["lev_money_positions_short_all"])
+    long_field = _find_field(latest, "lev", "long")
+    short_field = _find_field(latest, "lev", "short")
+    date_field = _find_field(latest, "report", "date")
+
+    lev_long = float(latest[long_field])
+    lev_short = float(latest[short_field])
     lev_net = lev_long - lev_short
     total = lev_long + lev_short
     gauge_score = round(lev_net / total, 4) if total else 0.0
@@ -48,10 +64,10 @@ def fetch_cot_data() -> dict:
     prior_net = None
     if len(rows) > 1:
         prior = rows[1]
-        prior_net = float(prior["lev_money_positions_long_all"]) - float(prior["lev_money_positions_short_all"])
+        prior_net = float(prior[long_field]) - float(prior[short_field])
 
     return {
-        "report_date": latest["report_date_as_yyyy_mm_dd"][:10],
+        "report_date": str(latest[date_field])[:10],
         "lev_long": lev_long,
         "lev_short": lev_short,
         "lev_net": lev_net,
