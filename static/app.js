@@ -76,6 +76,7 @@ function drawBricks() {
 
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
   const amber = getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
+  const dim = getComputedStyle(document.documentElement).getPropertyValue('--dim').trim();
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
@@ -99,6 +100,20 @@ function drawBricks() {
     }
     ctx.lineWidth = 1.5;
     ctx.stroke();
+
+    // Label the most recent brick with its actual time, so "how stale is
+    // this" is always visible at a glance without reading header text.
+    if (i === shown.length - 1) {
+      const t = new Date(b.formed_at.replace(/(\.\d+)?Z?$/, 'Z'));
+      let label = t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      label = label.replace(' ', '').toLowerCase(); // "11:30 AM" -> "11:30am"
+      ctx.fillStyle = dim;
+      ctx.font = "10px 'IBM Plex Mono', monospace";
+      ctx.textAlign = 'center';
+      const labelY = Math.min(y + bh + 14, h - 4);
+      ctx.fillText(label, x + brickW / 2, labelY);
+      ctx.textAlign = 'left';
+    }
   });
 
   // Pending "ghost" bar: shows whether live price is currently above or
@@ -197,6 +212,7 @@ pollLivePrice();
 
 window.addEventListener('resize', drawBricks);
 loadBricks();
+setInterval(loadBricks, 60000); // keep brick data (and the "Xh ago" text) fresh without needing a manual reload
 
 // ---- Macro calendar ----
 let nextEventTime = null; // Date object for the countdown ticker
