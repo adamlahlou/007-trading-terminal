@@ -226,6 +226,48 @@ function renderCountdown() {
 }
 setInterval(renderCountdown, 1000);
 
+function updateAlertStrip(events) {
+  const strip = document.getElementById('alert-strip');
+  const now = Date.now();
+  const HOUR = 3600000;
+
+  // Look for a high-impact event within the next 24h, or one that fired
+  // within the last hour (post-event reaction window still matters).
+  let urgent = null; // within 2h either side
+  let warn = null;   // within 24h ahead
+
+  for (const e of events) {
+    if (e.impact !== 'high') continue;
+    const t = parseEventTime(e.time);
+    if (!t) continue;
+    const diffMs = t.getTime() - now;
+
+    if (diffMs >= -HOUR && diffMs <= 2 * HOUR) {
+      urgent = { event: e, diffMs };
+      break; // most urgent case, stop looking
+    }
+    if (diffMs > 0 && diffMs <= 24 * HOUR) {
+      if (!warn || diffMs < warn.diffMs) warn = { event: e, diffMs };
+    }
+  }
+
+  if (urgent) {
+    const mins = Math.round(Math.abs(urgent.diffMs) / 60000);
+    const when = urgent.diffMs >= 0 ? `in ${mins}m` : `${mins}m ago`;
+    strip.textContent = `⚠ ${urgent.event.event} (${urgent.event.country}) ${when} — expect volatility`;
+    strip.className = 'alert-strip alert-urgent';
+    strip.style.display = 'block';
+  } else if (warn) {
+    const hrs = Math.round(warn.diffMs / HOUR);
+    strip.textContent = `${warn.event.event} (${warn.event.country}) in ~${hrs}h — high-impact, position with care`;
+    strip.className = 'alert-strip alert-warn';
+    strip.style.display = 'block';
+  } else {
+    strip.style.display = 'none';
+  }
+}
+setInterval(() => { if (window.__lastCalendarEvents) updateAlertStrip(window.__lastCalendarEvents); }, 30000);
+
 async function loadCalendar() {
   const nextBlock = document.getElementById('next-event-block');
   const listEl = document.getElementById('event-list');
@@ -233,6 +275,8 @@ async function loadCalendar() {
     const res = await fetch('/api/calendar');
     const data = await res.json();
     const events = data.events || [];
+    window.__lastCalendarEvents = events;
+    updateAlertStrip(events);
     const now = Date.now();
     const upcoming = events.filter(e => {
       const t = parseEventTime(e.time);
@@ -242,6 +286,7 @@ async function loadCalendar() {
     // Prefer the next high-impact event; fall back to the next event of any impact
     const nextHigh = upcoming.find(e => e.impact === 'high');
     const next = nextHigh || upcoming[0];
+
 
     if (next) {
       nextEventTime = parseEventTime(next.time);
