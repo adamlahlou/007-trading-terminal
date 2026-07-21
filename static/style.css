@@ -123,34 +123,34 @@ canvas { display:block; width:100%; height:420px; }
 .impact-dot.impact-low { background: var(--dim); }
 
 /* ---- Temperament gauge ---- */
-.gauge-panel { padding: 14px 16px 16px; border-top: 1px solid var(--line); }
+.gauge-panel { padding: 10px 16px 12px; border-top: 1px solid var(--line); }
 #yields-refresh-btn {
   background: #000; border: 1px solid var(--amber-dim); color: var(--amber);
-  font-family: inherit; font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
-  padding: 4px 10px; cursor: pointer;
+  font-family: inherit; font-size: 9px; font-weight: 600; letter-spacing: 0.05em;
+  padding: 3px 8px; cursor: pointer;
 }
 #yields-refresh-btn:hover { border-color: var(--amber); }
 #yields-refresh-btn:disabled { opacity: 0.5; cursor: default; }
 
 .gauge-track {
   position: relative;
-  height: 10px;
+  height: 5px;
   border: 1px solid var(--line);
-  background: linear-gradient(90deg, var(--blue) 0%, var(--amber) 50%, #ffffff 100%);
-  margin: 16px 0 8px;
+  background: linear-gradient(90deg, #1c3350 0%, #3d341f 50%, #4a4638 100%);
+  margin: 10px 0 6px;
 }
 .gauge-marker {
   position: absolute;
-  top: -5px;
-  width: 3px;
-  height: 20px;
-  background: #ffffff;
-  box-shadow: 0 0 4px rgba(0,0,0,0.8);
+  top: -3px;
+  width: 2px;
+  height: 11px;
+  background: var(--white);
+  box-shadow: 0 0 3px rgba(0,0,0,0.8);
 }
-.gauge-labels { display:flex; justify-content:space-between; font-size:9px; color:var(--dim); letter-spacing:0.06em; }
-.gauge-read { font-size: 13px; font-weight: 600; margin-top: 10px; }
+.gauge-labels { display:flex; justify-content:space-between; font-size:8px; color:var(--dim); letter-spacing:0.05em; }
+.gauge-read { font-size: 11px; font-weight: 600; margin-top: 6px; }
 .gauge-numbers {
-  display:flex; gap: 24px; margin-top: 12px; font-size: 11px; color: var(--dim);
+  display:flex; gap: 20px; margin-top: 8px; font-size: 10px; color: var(--dim);
   font-family: 'IBM Plex Mono', monospace;
 }
 .gauge-numbers b { color: var(--white); }

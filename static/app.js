@@ -314,7 +314,7 @@ async function loadYields() {
     const pct = 50 + (clamped / GAUGE_CLAMP) * 50;
 
     let label, labelColor;
-    if (d.spread > 0.3) { label = 'Leaning bullish (GBP)'; labelColor = '#ffffff'; }
+    if (d.spread > 0.3) { label = 'Leaning bullish (GBP)'; labelColor = 'var(--white)'; }
     else if (d.spread < -0.3) { label = 'Leaning bearish (GBP)'; labelColor = 'var(--blue)'; }
     else { label = 'Neutral'; labelColor = 'var(--amber)'; }
 
