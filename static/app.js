@@ -502,3 +502,59 @@ if (newsBtn) {
 }
 
 loadNewsGauge();
+
+// ---- COT positioning gauge ----
+async function loadCotGauge() {
+  const body = document.getElementById('cot-gauge-body');
+  try {
+    const res = await fetch('/api/cot');
+    const d = await res.json();
+    if (!d || d.gauge_score === undefined) {
+      body.innerHTML = `<div class="dim-small">No COT data yet.</div>`;
+      return;
+    }
+
+    const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
+    let label = 'Neutral';
+    let labelColor = 'var(--amber)';
+    if (d.gauge_score > 0.1) { label = 'Leveraged funds net long GBP'; labelColor = 'var(--white)'; }
+    else if (d.gauge_score < -0.1) { label = 'Leveraged funds net short GBP'; labelColor = 'var(--blue)'; }
+
+    let changeNote = '';
+    if (d.prior_net !== null && d.prior_net !== undefined) {
+      const change = d.lev_net - d.prior_net;
+      const dir = change > 0 ? 'more long' : (change < 0 ? 'more short' : 'unchanged');
+      changeNote = `<div class="dim-small" style="margin-top:4px;">vs prior week: ${dir} (${change > 0 ? '+' : ''}${Math.round(change).toLocaleString()} contracts)</div>`;
+    }
+
+    body.innerHTML = `
+      <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
+      <div class="gauge-labels"><span>NET SHORT</span><span>NEUTRAL</span><span>NET LONG</span></div>
+      <div class="gauge-read" style="color:${labelColor}">${label}</div>
+      <div class="gauge-numbers">
+        <div>Long: <b>${Math.round(d.lev_long).toLocaleString()}</b></div>
+        <div>Short: <b>${Math.round(d.lev_short).toLocaleString()}</b></div>
+      </div>
+      <div class="dim-small" style="margin-top:4px;">Report date: ${d.report_date}</div>
+      ${changeNote}
+    `;
+  } catch (e) {
+    body.innerHTML = `<div class="dim-small">COT data unavailable: ${e.message}</div>`;
+  }
+}
+
+const cotBtn = document.getElementById('cot-refresh-btn');
+if (cotBtn) {
+  cotBtn.addEventListener('click', async () => {
+    cotBtn.disabled = true;
+    cotBtn.textContent = 'REFRESHING...';
+    try {
+      await fetch('/api/cot-refresh-now', { method: 'POST' });
+    } catch (e) { /* fall through, still reload cache below */ }
+    await loadCotGauge();
+    cotBtn.disabled = false;
+    cotBtn.textContent = 'REFRESH';
+  });
+}
+
+loadCotGauge();

@@ -3,7 +3,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client
+from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -94,4 +94,15 @@ def run_news_refresh() -> dict:
     now = datetime.now(timezone.utc).isoformat()
     db.save_news_state(result["score"], result["article_count"], result["headlines"], now)
     logger.info(f"News refresh: score {result['score']} across {result['article_count']} articles")
+    return result
+
+
+def run_cot_refresh() -> dict:
+    result = cot_client.fetch_cot_data()
+    now = datetime.now(timezone.utc).isoformat()
+    db.save_cot_state(
+        result["report_date"], result["lev_long"], result["lev_short"],
+        result["lev_net"], result["prior_net"], result["gauge_score"], now,
+    )
+    logger.info(f"COT refresh: report {result['report_date']}, lev net {result['lev_net']}, gauge {result['gauge_score']}")
     return result

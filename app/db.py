@@ -76,6 +76,20 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cot_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            report_date TEXT NOT NULL,
+            lev_long REAL NOT NULL,
+            lev_short REAL NOT NULL,
+            lev_net REAL NOT NULL,
+            prior_net REAL,
+            gauge_score REAL NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -245,3 +259,30 @@ def get_news_state() -> dict | None:
         "headlines": json.loads(row["headlines_json"]),
         "updated_at": row["updated_at"],
     }
+
+
+def save_cot_state(report_date, lev_long, lev_short, lev_net, prior_net, gauge_score, updated_at):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO cot_state (id, report_date, lev_long, lev_short, lev_net, prior_net, gauge_score, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            report_date=excluded.report_date, lev_long=excluded.lev_long,
+            lev_short=excluded.lev_short, lev_net=excluded.lev_net,
+            prior_net=excluded.prior_net, gauge_score=excluded.gauge_score,
+            updated_at=excluded.updated_at
+        """,
+        (report_date, lev_long, lev_short, lev_net, prior_net, gauge_score, updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_cot_state() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM cot_state WHERE id = 1").fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return dict(row)
