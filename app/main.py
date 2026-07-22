@@ -8,7 +8,8 @@ from fastapi.templating import Jinja2Templates
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
-from . import db, oanda_client
+from datetime import datetime, timedelta, timezone
+from . import db, oanda_client, calendar_schedule
 from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_rate_tone_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +37,21 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*", id="geo_refresh")
     # Rate decisions are rare -- checking every 4h easily catches one within a day of it happening
     scheduler.add_job(lambda: asyncio.to_thread(run_rate_tone_refresh), "cron", hour="*/4", id="rate_tone_refresh")
+
+    # Precise scheduling: these release times are publicly known in advance,
+    # so schedule an exact check ~20 min after each one instead of relying
+    # only on the 4h poll above (which is kept as a safety net in case a
+    # precise job doesn't fire for some reason, e.g. a redeploy at the wrong moment).
+    now_utc = datetime.now(timezone.utc)
+    for bank, decision_dt in calendar_schedule.get_rate_decision_datetimes():
+        check_dt = decision_dt + timedelta(minutes=20)
+        if check_dt > now_utc:
+            scheduler.add_job(
+                lambda: asyncio.to_thread(run_rate_tone_refresh),
+                "date",
+                run_date=check_dt,
+                id=f"rate_tone_precise_{bank}_{decision_dt.date()}",
+            )
     scheduler.start()
 
     async def _startup_scan():

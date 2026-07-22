@@ -103,6 +103,20 @@ def _nfp_occurrences(start: date, end: date) -> list[dict]:
     return events
 
 
+def get_rate_decision_datetimes() -> list[tuple[str, datetime]]:
+    """Returns [(bank, utc_datetime)] for every known FOMC/BoE decision --
+    used to schedule an exact check shortly after each release instead of
+    polling blindly, since these times are publicly known in advance."""
+    results = []
+    for d, hhmm in FOMC_DATES_2026:
+        iso = _uk_local_to_utc_iso(d, hhmm)
+        results.append(("Fed", datetime.strptime(iso, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)))
+    for d, hhmm in BOE_MPC_DATES_2026:
+        iso = _uk_local_to_utc_iso(d, hhmm)
+        results.append(("BoE", datetime.strptime(iso, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)))
+    return results
+
+
 def fetch_calendar(days_ahead: int = 30, days_behind: int = 1) -> list[dict]:
     """Same interface as the vendor clients it replaces:
     returns [{time, country, event, impact, actual, estimate, prev}, ...]
