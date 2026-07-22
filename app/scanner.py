@@ -3,7 +3,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client
+from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -179,6 +179,19 @@ def run_momentum_refresh() -> dict:
 def run_geo_refresh() -> dict:
     result = marketaux_client.fetch_geopolitical_sentiment()
     now = datetime.now(timezone.utc).isoformat()
-    db.save_geo_state(result["gauge_score"], result["article_count"], result["headlines"], now)
-    logger.info(f"Geopolitical refresh: gauge {result['gauge_score']} across {result['article_count']} articles")
-    return result
+
+    score = result["gauge_score"]
+    reason = None
+    try:
+        llm_result = llm_client.interpret_geopolitical_headlines(result["headlines"])
+        score = llm_result["score"]
+        reason = llm_result["reason"]
+        logger.info(f"Geopolitical (LLM): score {score} -- {reason}")
+    except Exception as e:
+        # Graceful fallback: keep the naive Marketaux average rather than
+        # losing the gauge entirely if the LLM call fails for any reason.
+        logger.warning(f"LLM geopolitical interpretation failed, falling back to raw sentiment average: {e}")
+
+    db.save_geo_state(score, result["article_count"], result["headlines"], now, reason=reason)
+    logger.info(f"Geopolitical refresh: gauge {score} across {result['article_count']} articles")
+    return {**result, "gauge_score": score, "reason": reason}

@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     # NFP/CPI only update monthly -- once a day easily catches it
     scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
     # Geopolitical risk can move fast -- check more often than the GBP/USD news gauge
-    scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*/2", id="geo_refresh")
+    scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*", id="geo_refresh")
     scheduler.start()
 
     async def _startup_scan():

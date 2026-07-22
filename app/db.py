@@ -128,6 +128,10 @@ def init_db():
         )
         """
     )
+    try:
+        conn.execute("ALTER TABLE geo_state ADD COLUMN reason TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     conn.close()
 
@@ -361,17 +365,18 @@ def get_momentum_state() -> dict | None:
     return dict(row)
 
 
-def save_geo_state(gauge_score, article_count, headlines, updated_at):
+def save_geo_state(gauge_score, article_count, headlines, updated_at, reason=None):
     conn = get_conn()
     conn.execute(
         """
-        INSERT INTO geo_state (id, gauge_score, article_count, headlines_json, updated_at)
-        VALUES (1, ?, ?, ?, ?)
+        INSERT INTO geo_state (id, gauge_score, article_count, headlines_json, updated_at, reason)
+        VALUES (1, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             gauge_score=excluded.gauge_score, article_count=excluded.article_count,
-            headlines_json=excluded.headlines_json, updated_at=excluded.updated_at
+            headlines_json=excluded.headlines_json, updated_at=excluded.updated_at,
+            reason=excluded.reason
         """,
-        (gauge_score, article_count, json.dumps(headlines), updated_at),
+        (gauge_score, article_count, json.dumps(headlines), updated_at, reason),
     )
     conn.commit()
     conn.close()
@@ -383,9 +388,11 @@ def get_geo_state() -> dict | None:
     conn.close()
     if row is None:
         return None
+    keys = row.keys()
     return {
         "gauge_score": row["gauge_score"],
         "article_count": row["article_count"],
         "headlines": json.loads(row["headlines_json"]),
         "updated_at": row["updated_at"],
+        "reason": row["reason"] if "reason" in keys else None,
     }

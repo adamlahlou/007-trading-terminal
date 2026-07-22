@@ -666,15 +666,17 @@ async function loadGeoGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.15);
-    const quietNote = d.article_count < 3
-      ? 'No significant global risk events detected right now'
-      : `${d.article_count} relevant articles`;
+    const note = d.reason
+      ? d.reason
+      : (d.article_count < 3
+          ? 'No significant global risk events detected right now'
+          : `${d.article_count} relevant articles`);
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
       <div class="gauge-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
       <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
-      <div class="dim-small" style="margin-top:4px;">${quietNote}</div>
+      <div class="dim-small" style="margin-top:4px;">${note}</div>
     `;
 
     const heads = d.headlines || [];
