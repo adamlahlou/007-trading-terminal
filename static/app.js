@@ -438,7 +438,7 @@ async function loadYields() {
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
-      <div class="gauge-labels"><span>BEARISH (GBP)</span><span>NEUTRAL</span><span>BULLISH (GBP)</span></div>
+      <div class="gauge-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
       <div class="gauge-read" style="color:${verdict.color}">${verdict.text} · spread ${d.spread > 0 ? '+' : ''}${d.spread.toFixed(3)}</div>
       <div class="gauge-numbers">
         <div>US 10Y: <b>${d.us_yield.toFixed(3)}%</b> <span class="dim-small">(${d.us_date})</span></div>
@@ -556,7 +556,7 @@ async function loadCotGauge() {
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
-      <div class="gauge-labels"><span>NET SHORT</span><span>NEUTRAL</span><span>NET LONG</span></div>
+      <div class="gauge-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
       <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
       <div class="dim-small" style="margin-top:2px;">${positioningNote}</div>
       <div class="gauge-numbers">
@@ -605,7 +605,7 @@ async function loadMomentumGauge() {
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
-      <div class="gauge-labels"><span>HOT (USD+)</span><span>NEUTRAL</span><span>COOL (GBP+)</span></div>
+      <div class="gauge-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
       <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
       <div class="dim-small" style="margin-top:2px;">${dataNote}</div>
       <div class="gauge-numbers">
