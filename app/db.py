@@ -110,6 +110,17 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS geo_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            gauge_score REAL NOT NULL,
+            article_count INTEGER NOT NULL,
+            headlines_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -336,3 +347,33 @@ def get_momentum_state() -> dict | None:
     if row is None:
         return None
     return dict(row)
+
+
+def save_geo_state(gauge_score, article_count, headlines, updated_at):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO geo_state (id, gauge_score, article_count, headlines_json, updated_at)
+        VALUES (1, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            gauge_score=excluded.gauge_score, article_count=excluded.article_count,
+            headlines_json=excluded.headlines_json, updated_at=excluded.updated_at
+        """,
+        (gauge_score, article_count, json.dumps(headlines), updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_geo_state() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM geo_state WHERE id = 1").fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return {
+        "gauge_score": row["gauge_score"],
+        "article_count": row["article_count"],
+        "headlines": json.loads(row["headlines_json"]),
+        "updated_at": row["updated_at"],
+    }

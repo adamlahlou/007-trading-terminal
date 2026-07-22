@@ -13,6 +13,7 @@ BASE_URL = "https://api.marketaux.com/v1/news/all"
 
 GBP_QUERY = "GBP OR sterling OR pound OR Bank of England OR UK economy"
 USD_QUERY = "Federal Reserve OR US dollar OR Non-Farm Payrolls OR US inflation OR US economy"
+GEOPOLITICAL_QUERY = "war OR military conflict OR geopolitical tension OR sanctions OR invasion OR ceasefire OR global crisis OR safe haven demand"
 
 
 def _fetch_raw_sentiment(query: str, limit: int = 10) -> dict:
@@ -86,4 +87,25 @@ def fetch_combined_sentiment() -> dict:
         "usd_score": usd["score"],
         "article_count": gbp["article_count"] + usd["article_count"],
         "headlines": merged_headlines,
+    }
+
+
+def fetch_geopolitical_sentiment() -> dict:
+    """
+    Returns {gauge_score, article_count, headlines}.
+    Unlike the GBP/USD news gauge, this one's sentiment score IS already
+    directional as-is: negative sentiment about war/crisis/conflict is a
+    genuine risk-off signal (flight to safety, broad USD strength), which
+    is GBPUSD-bearish -- so no inversion needed, negative score -> BEARISH
+    GBPUSD verdict, same as the shared gbpusdVerdict logic expects.
+
+    Deliberately quiet most of the time: low article count / near-zero
+    score just means nothing significant is happening, which is the
+    correct default state, not a missing-data problem.
+    """
+    result = _fetch_raw_sentiment(GEOPOLITICAL_QUERY, limit=12)
+    return {
+        "gauge_score": result["score"],
+        "article_count": result["article_count"],
+        "headlines": result["headlines"],
     }

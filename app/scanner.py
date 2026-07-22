@@ -121,3 +121,11 @@ def run_momentum_refresh() -> dict:
     )
     logger.info(f"Momentum refresh: CPI YoY {result['cpi_yoy']}%, NFP change {result['nfp_change']}k, gauge {result['gauge_score']}")
     return result
+
+
+def run_geo_refresh() -> dict:
+    result = marketaux_client.fetch_geopolitical_sentiment()
+    now = datetime.now(timezone.utc).isoformat()
+    db.save_geo_state(result["gauge_score"], result["article_count"], result["headlines"], now)
+    logger.info(f"Geopolitical refresh: gauge {result['gauge_score']} across {result['article_count']} articles")
+    return result

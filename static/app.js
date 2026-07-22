@@ -291,7 +291,7 @@ function updateAlertStrip(events) {
   let urgent = null; // within 2h either side
   let warn = null;   // within 24h ahead
 
-  for (const e of events) {
+  for (const e of (events || [])) {
     if (e.impact !== 'high') continue;
     const t = parseEventTime(e.time);
     if (!t) continue;
@@ -306,13 +306,33 @@ function updateAlertStrip(events) {
     }
   }
 
+  // Calendar urgency takes priority; if none, check the geopolitical gauge
   if (urgent) {
     const mins = Math.round(Math.abs(urgent.diffMs) / 60000);
     const when = urgent.diffMs >= 0 ? `in ${mins}m` : `${mins}m ago`;
     strip.textContent = `⚠ ${urgent.event.event} (${urgent.event.country}) ${when} — expect volatility`;
     strip.className = 'alert-strip alert-urgent';
     strip.style.display = 'block';
-  } else if (warn) {
+    return;
+  }
+
+  const geoScore = window.__lastGeoScore;
+  if (geoScore !== undefined && geoScore !== null) {
+    if (geoScore < -0.4) {
+      strip.textContent = `⚠ Significant negative geopolitical news detected — elevated risk-off conditions`;
+      strip.className = 'alert-strip alert-urgent';
+      strip.style.display = 'block';
+      return;
+    }
+    if (geoScore < -0.2) {
+      strip.textContent = `Elevated geopolitical risk sentiment — watch for volatility`;
+      strip.className = 'alert-strip alert-warn';
+      strip.style.display = 'block';
+      return;
+    }
+  }
+
+  if (warn) {
     const hrs = Math.round(warn.diffMs / HOUR);
     strip.textContent = `${warn.event.event} (${warn.event.country}) in ~${hrs}h — high-impact, position with care`;
     strip.className = 'alert-strip alert-warn';
@@ -321,7 +341,7 @@ function updateAlertStrip(events) {
     strip.style.display = 'none';
   }
 }
-setInterval(() => { if (window.__lastCalendarEvents) updateAlertStrip(window.__lastCalendarEvents); }, 30000);
+setInterval(() => { updateAlertStrip(window.__lastCalendarEvents); }, 30000);
 
 async function loadCalendar() {
   const nextBlock = document.getElementById('next-event-block');
@@ -613,3 +633,64 @@ if (momentumBtn) {
 }
 
 loadMomentumGauge();
+
+// ---- Geopolitical / global-risk gauge ----
+async function loadGeoGauge() {
+  const body = document.getElementById('geo-gauge-body');
+  const headlinesEl = document.getElementById('geo-headlines');
+  try {
+    const res = await fetch('/api/geo');
+    const d = await res.json();
+    if (!d || d.gauge_score === undefined) {
+      body.innerHTML = `<div class="dim-small">No global risk data yet.</div>`;
+      window.__lastGeoScore = null;
+      return;
+    }
+
+    window.__lastGeoScore = d.gauge_score;
+    updateAlertStrip(window.__lastCalendarEvents);
+
+    const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
+    const verdict = gbpusdVerdict(d.gauge_score, 0.15);
+    const quietNote = d.article_count < 3
+      ? 'No significant global risk events detected right now'
+      : `${d.article_count} relevant articles`;
+
+    body.innerHTML = `
+      <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
+      <div class="gauge-labels"><span>RISK-OFF (USD+)</span><span>CALM</span><span>RISK-ON</span></div>
+      <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
+      <div class="dim-small" style="margin-top:4px;">${quietNote}</div>
+    `;
+
+    const heads = d.headlines || [];
+    if (heads.length && d.article_count >= 3) {
+      headlinesEl.innerHTML = heads.map(h => `
+        <div class="nh-row">
+          <span class="nh-sentiment" style="color:${sentimentColor(h.sentiment)}">${h.sentiment !== null ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--'}</span>
+          <a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>
+        </div>
+      `).join('');
+    } else {
+      headlinesEl.innerHTML = '';
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="dim-small">Global risk data unavailable: ${e.message}</div>`;
+  }
+}
+
+const geoBtn = document.getElementById('geo-refresh-btn');
+if (geoBtn) {
+  geoBtn.addEventListener('click', async () => {
+    geoBtn.disabled = true;
+    geoBtn.textContent = 'REFRESHING...';
+    try {
+      await fetch('/api/geo-refresh-now', { method: 'POST' });
+    } catch (e) { /* fall through, still reload cache below */ }
+    await loadGeoGauge();
+    geoBtn.disabled = false;
+    geoBtn.textContent = 'REFRESH';
+  });
+}
+
+loadGeoGauge();

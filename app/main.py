@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
 from . import db, oanda_client
-from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, BOX_SIZE
+from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("007-terminal")
@@ -32,6 +32,8 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", hour="7", id="cot_refresh")
     # NFP/CPI only update monthly -- once a day easily catches it
     scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
+    # Geopolitical risk can move fast -- check more often than the GBP/USD news gauge
+    scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*/2", id="geo_refresh")
     scheduler.start()
 
     async def _startup_scan():
@@ -70,12 +72,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Startup momentum refresh failed: {e}")
 
+    async def _startup_geo():
+        try:
+            await asyncio.to_thread(run_geo_refresh)
+        except Exception as e:
+            logger.error(f"Startup geopolitical refresh failed: {e}")
+
     asyncio.create_task(_startup_scan())
     asyncio.create_task(_startup_calendar())
     asyncio.create_task(_startup_yields())
     asyncio.create_task(_startup_news())
     asyncio.create_task(_startup_cot())
     asyncio.create_task(_startup_momentum())
+    asyncio.create_task(_startup_geo())
     yield
     scheduler.shutdown()
 
@@ -201,4 +210,20 @@ async def momentum_refresh_now():
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Momentum refresh failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/geo")
+async def api_geo():
+    state = db.get_geo_state()
+    return JSONResponse(state or {})
+
+
+@app.post("/api/geo-refresh-now")
+async def geo_refresh_now():
+    try:
+        result = await asyncio.to_thread(run_geo_refresh)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Geopolitical refresh failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=502)
