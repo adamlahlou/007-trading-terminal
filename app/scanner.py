@@ -43,7 +43,7 @@ def _run_scan_locked() -> dict:
     last_candle_time = saved["last_candle_time"]
 
     since_dt = _parse_time(last_candle_time) if last_candle_time else None
-    candles = oanda_client.fetch_candles(since=since_dt, count=500, granularity="M30")
+    candles = oanda_client.fetch_candles(since=since_dt, count=500, granularity="M15")
 
     # Guard against re-processing the boundary candle we already handled
     if last_candle_time:

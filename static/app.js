@@ -107,7 +107,7 @@ function drawBricks() {
   // Bricks sharing the same formed_at came from the same 30min candle --
   // i.e. price moved more than one box within a single bar. Worth flagging.
   const formedAtCounts = {};
-  shown.forEach(b => { formedAtCounts[b.formed_at] = (formedAtCounts[b.formed_at] || 0) + 1; });
+  bricks.forEach(b => { formedAtCounts[b.formed_at] = (formedAtCounts[b.formed_at] || 0) + 1; });
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
@@ -140,12 +140,16 @@ function drawBricks() {
       ctx.fill();
     }
 
-    // Label the most recent brick with its actual time, so "how stale is
-    // this" is always visible at a glance without reading header text.
+    // Label the most recent brick with its actual date+time, so "how stale
+    // is this" is always visible at a glance -- previously this only showed
+    // the time, so an old brick sitting there for hours could easily be
+    // misread as being from today.
     if (i === shown.length - 1) {
       const t = new Date(b.formed_at.replace(/(\.\d+)?Z?$/, 'Z'));
-      let label = t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      label = label.replace(' ', '').toLowerCase(); // "11:30 AM" -> "11:30am"
+      const datePart = t.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
+      let timePart = t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      timePart = timePart.replace(' ', '').toLowerCase(); // "11:30 AM" -> "11:30am"
+      const label = `${datePart} ${timePart}`;
       ctx.fillStyle = dim;
       ctx.font = "10px 'IBM Plex Mono', monospace";
       ctx.textAlign = 'center';

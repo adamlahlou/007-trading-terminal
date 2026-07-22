@@ -39,7 +39,7 @@ def fetch_current_price() -> dict:
     return {"bid": bid, "ask": ask, "mid": round((bid + ask) / 2, 5), "time": price["time"]}
 
 
-def fetch_candles(since: datetime | None = None, count: int = 500, granularity: str = "M30") -> list[dict]:
+def fetch_candles(since: datetime | None = None, count: int = 500, granularity: str = "M15") -> list[dict]:
     """
     Returns a list of {time, open, high, low, close, complete} dicts, oldest first.
     If `since` is given, fetches candles from that point forward (used to avoid

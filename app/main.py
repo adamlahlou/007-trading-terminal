@@ -20,8 +20,8 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    # Every 30 minutes, on the hour and half-hour
-    scheduler.add_job(lambda: asyncio.to_thread(run_scan), "cron", minute="0,30", id="thirty_min_scan")
+    # Every 15 minutes
+    scheduler.add_job(lambda: asyncio.to_thread(run_scan), "cron", minute="0,15,30,45", id="fifteen_min_scan")
     # Calendar doesn't change minute to minute -- refresh every 6 hours
     scheduler.add_job(lambda: asyncio.to_thread(run_calendar_refresh), "cron", hour="*/6", id="calendar_refresh")
     # Yields move slowly (UK series is monthly) -- once a day is plenty
