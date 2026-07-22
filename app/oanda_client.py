@@ -39,11 +39,13 @@ def fetch_current_price() -> dict:
     return {"bid": bid, "ask": ask, "mid": round((bid + ask) / 2, 5), "time": price["time"]}
 
 
-def fetch_candles(since: datetime | None = None, count: int = 500, granularity: str = "M15") -> list[dict]:
+def fetch_candles(since: datetime | None = None, count: int = 500, granularity: str = "M15", until: datetime | None = None) -> list[dict]:
     """
     Returns a list of {time, open, high, low, close, complete} dicts, oldest first.
-    If `since` is given, fetches candles from that point forward (used to avoid
-    gaps/re-fetching everything on every scan). Otherwise fetches the most
+    If `since` is given, fetches candles from that point forward. If `until`
+    is also given, bounds the range (used for backtesting a specific window --
+    OANDA allows up to 5000 candles per request, which comfortably covers a
+    60-day M15 range without needing pagination). Otherwise fetches the most
     recent `count` candles.
     """
     if not OANDA_API_TOKEN:
@@ -52,8 +54,9 @@ def fetch_candles(since: datetime | None = None, count: int = 500, granularity: 
     headers = {"Authorization": f"Bearer {OANDA_API_TOKEN}"}
     params = {"granularity": granularity, "price": "M"}
     if since is not None:
-        # OANDA wants RFC3339; add a tiny buffer so we don't refetch the same last candle
         params["from"] = since.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+        if until is not None:
+            params["to"] = until.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
     else:
         params["count"] = count
 

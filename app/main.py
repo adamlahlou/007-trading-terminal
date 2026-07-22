@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
 from datetime import datetime, timedelta, timezone
-from . import db, oanda_client, calendar_schedule
+from . import db, oanda_client, calendar_schedule, backtest
 from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_rate_tone_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
@@ -298,3 +298,16 @@ async def refresh_all():
     return JSONResponse({
         "results": {name: {"ok": ok, "error": err} for name, ok, err in results}
     })
+
+
+@app.get("/api/backtest")
+async def api_backtest(days: int = 45):
+    """On-demand only -- not scheduled. Fetches historical OANDA data and
+    simulates the Renko trade rules against it. Runs in a thread since it
+    does real (slow-ish) API calls and computation."""
+    try:
+        result = await asyncio.to_thread(backtest.run_backtest, days)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Backtest failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
