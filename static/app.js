@@ -658,7 +658,7 @@ async function loadGeoGauge() {
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
-      <div class="gauge-labels"><span>RISK-OFF (USD+)</span><span>CALM</span><span>RISK-ON</span></div>
+      <div class="gauge-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
       <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
       <div class="dim-small" style="margin-top:4px;">${quietNote}</div>
     `;
