@@ -220,27 +220,6 @@ async function loadBricks() {
   drawBricks();
 }
 
-const scanBtn = document.getElementById('scan-now-btn');
-scanBtn.addEventListener('click', async () => {
-  scanBtn.disabled = true;
-  scanBtn.textContent = 'SCANNING...';
-  const statusEl = document.getElementById('scan-status');
-  try {
-    const res = await fetch('/api/scan-now', { method: 'POST' });
-    const result = await res.json();
-    if (result.error) {
-      statusEl.textContent = `STATUS: ERROR — ${result.error}`;
-    } else {
-      statusEl.textContent = `STATUS: OK — ${result.new_bricks} new brick(s)`;
-    }
-  } catch (e) {
-    statusEl.textContent = 'STATUS: REQUEST FAILED';
-  }
-  await loadBricks();
-  scanBtn.disabled = false;
-  scanBtn.textContent = 'SCAN NOW';
-});
-
 async function pollLivePrice() {
   const el = document.getElementById('live-price');
   if (!el) { console.error('live-price element not found in DOM'); return; }
@@ -411,20 +390,6 @@ async function loadCalendar() {
   }
 }
 
-const calBtn = document.getElementById('calendar-refresh-btn');
-if (calBtn) {
-  calBtn.addEventListener('click', async () => {
-    calBtn.disabled = true;
-    calBtn.textContent = 'REFRESHING...';
-    try {
-      await fetch('/api/calendar-refresh-now', { method: 'POST' });
-    } catch (e) { /* fall through, still reload cache below */ }
-    await loadCalendar();
-    calBtn.disabled = false;
-    calBtn.textContent = 'REFRESH';
-  });
-}
-
 loadCalendar();
 
 // ---- Yield differential / temperament gauge ----
@@ -462,20 +427,6 @@ async function loadYields() {
   } catch (e) {
     body.innerHTML = `<div class="dim-small">Yield data unavailable: ${e.message}</div>`;
   }
-}
-
-const yieldsBtn = document.getElementById('yields-refresh-btn');
-if (yieldsBtn) {
-  yieldsBtn.addEventListener('click', async () => {
-    yieldsBtn.disabled = true;
-    yieldsBtn.textContent = 'REFRESHING...';
-    try {
-      await fetch('/api/yields-refresh-now', { method: 'POST' });
-    } catch (e) { /* fall through, still reload cache below */ }
-    await loadYields();
-    yieldsBtn.disabled = false;
-    yieldsBtn.textContent = 'REFRESH';
-  });
 }
 
 loadYields();
@@ -529,20 +480,6 @@ async function loadNewsGauge() {
   }
 }
 
-const newsBtn = document.getElementById('news-refresh-btn');
-if (newsBtn) {
-  newsBtn.addEventListener('click', async () => {
-    newsBtn.disabled = true;
-    newsBtn.textContent = 'REFRESHING...';
-    try {
-      await fetch('/api/news-refresh-now', { method: 'POST' });
-    } catch (e) { /* fall through, still reload cache below */ }
-    await loadNewsGauge();
-    newsBtn.disabled = false;
-    newsBtn.textContent = 'REFRESH';
-  });
-}
-
 loadNewsGauge();
 
 // ---- COT positioning gauge ----
@@ -585,20 +522,6 @@ async function loadCotGauge() {
   }
 }
 
-const cotBtn = document.getElementById('cot-refresh-btn');
-if (cotBtn) {
-  cotBtn.addEventListener('click', async () => {
-    cotBtn.disabled = true;
-    cotBtn.textContent = 'REFRESHING...';
-    try {
-      await fetch('/api/cot-refresh-now', { method: 'POST' });
-    } catch (e) { /* fall through, still reload cache below */ }
-    await loadCotGauge();
-    cotBtn.disabled = false;
-    cotBtn.textContent = 'REFRESH';
-  });
-}
-
 loadCotGauge();
 
 // ---- US data momentum gauge (NFP/CPI) ----
@@ -630,20 +553,6 @@ async function loadMomentumGauge() {
   } catch (e) {
     body.innerHTML = `<div class="dim-small">Momentum data unavailable: ${e.message}</div>`;
   }
-}
-
-const momentumBtn = document.getElementById('momentum-refresh-btn');
-if (momentumBtn) {
-  momentumBtn.addEventListener('click', async () => {
-    momentumBtn.disabled = true;
-    momentumBtn.textContent = 'REFRESHING...';
-    try {
-      await fetch('/api/momentum-refresh-now', { method: 'POST' });
-    } catch (e) { /* fall through, still reload cache below */ }
-    await loadMomentumGauge();
-    momentumBtn.disabled = false;
-    momentumBtn.textContent = 'REFRESH';
-  });
 }
 
 loadMomentumGauge();
@@ -695,20 +604,6 @@ async function loadGeoGauge() {
   }
 }
 
-const geoBtn = document.getElementById('geo-refresh-btn');
-if (geoBtn) {
-  geoBtn.addEventListener('click', async () => {
-    geoBtn.disabled = true;
-    geoBtn.textContent = 'REFRESHING...';
-    try {
-      await fetch('/api/geo-refresh-now', { method: 'POST' });
-    } catch (e) { /* fall through, still reload cache below */ }
-    await loadGeoGauge();
-    geoBtn.disabled = false;
-    geoBtn.textContent = 'REFRESH';
-  });
-}
-
 loadGeoGauge();
 
 // ---- Rate decision tone gauge (Fed/BoE) ----
@@ -735,20 +630,6 @@ async function loadRateToneGauge() {
   } catch (e) {
     body.innerHTML = `<div class="dim-small">Rate tone data unavailable: ${e.message}</div>`;
   }
-}
-
-const rateToneBtn = document.getElementById('rate-tone-refresh-btn');
-if (rateToneBtn) {
-  rateToneBtn.addEventListener('click', async () => {
-    rateToneBtn.disabled = true;
-    rateToneBtn.textContent = 'REFRESHING...';
-    try {
-      await fetch('/api/rate-tone-refresh-now', { method: 'POST' });
-    } catch (e) { /* fall through, still reload cache below */ }
-    await loadRateToneGauge();
-    rateToneBtn.disabled = false;
-    rateToneBtn.textContent = 'REFRESH';
-  });
 }
 
 loadRateToneGauge();
