@@ -3,7 +3,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client
+from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client, rate_tone_client
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -69,6 +69,10 @@ def get_gauge_verdicts() -> list[tuple[str, int]]:
     geo_state = db.get_geo_state()
     if geo_state:
         verdicts.append(("Geo", _gauge_verdict(geo_state["gauge_score"], 0.15)))
+
+    rate_tone_state = db.get_rate_tone_state()
+    if rate_tone_state:
+        verdicts.append(("RateTone", _gauge_verdict(rate_tone_state["gauge_score"], 0.15)))
 
     return verdicts
 
@@ -195,3 +199,34 @@ def run_geo_refresh() -> dict:
     db.save_geo_state(score, result["article_count"], result["headlines"], now, reason=reason)
     logger.info(f"Geopolitical refresh: gauge {score} across {result['article_count']} articles")
     return {**result, "gauge_score": score, "reason": reason}
+
+
+def run_rate_tone_refresh() -> dict:
+    """
+    Checks for a FOMC/BoE decision in the last few days; if there's one we
+    haven't processed yet, fetches the actual statement and has Claude judge
+    hawkish/dovish tone. Dormant most of the time by design -- rate
+    decisions are rare, so this just leaves the last known reading in place
+    between meetings rather than needing constant refreshing.
+    """
+    today = datetime.now(timezone.utc).date()
+    found = rate_tone_client.find_most_recent_decision(today)
+    if found is None:
+        return {"skipped": True, "reason": "no recent rate decision"}
+
+    bank, meeting_date = found
+    existing = db.get_rate_tone_state()
+    if existing and existing["bank"] == bank and existing["meeting_date"] == meeting_date.isoformat():
+        return {"skipped": True, "reason": "already processed this meeting"}
+
+    statement_text = rate_tone_client.fetch_statement_text(bank, meeting_date)
+    result = rate_tone_client.interpret_rate_statement(bank, statement_text)
+
+    # Fed hawkish -> USD strength -> GBPUSD bearish (inverted).
+    # BoE hawkish -> GBP strength -> GBPUSD bullish (direct).
+    gauge_score = -result["score"] if bank == "Fed" else result["score"]
+
+    now = datetime.now(timezone.utc).isoformat()
+    db.save_rate_tone_state(bank, meeting_date.isoformat(), result["score"], gauge_score, result["reason"], now)
+    logger.info(f"Rate tone ({bank}, {meeting_date}): raw {result['score']}, gauge {gauge_score} -- {result['reason']}")
+    return {"bank": bank, "meeting_date": meeting_date.isoformat(), "gauge_score": gauge_score, "reason": result["reason"]}

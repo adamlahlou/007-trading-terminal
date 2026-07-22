@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
 from . import db, oanda_client
-from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, BOX_SIZE
+from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_rate_tone_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("007-terminal")
@@ -34,6 +34,8 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
     # Geopolitical risk can move fast -- check more often than the GBP/USD news gauge
     scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*", id="geo_refresh")
+    # Rate decisions are rare -- checking every 4h easily catches one within a day of it happening
+    scheduler.add_job(lambda: asyncio.to_thread(run_rate_tone_refresh), "cron", hour="*/4", id="rate_tone_refresh")
     scheduler.start()
 
     async def _startup_scan():
@@ -78,6 +80,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Startup geopolitical refresh failed: {e}")
 
+    async def _startup_rate_tone():
+        try:
+            await asyncio.to_thread(run_rate_tone_refresh)
+        except Exception as e:
+            logger.error(f"Startup rate tone refresh failed: {e}")
+
     asyncio.create_task(_startup_scan())
     asyncio.create_task(_startup_calendar())
     asyncio.create_task(_startup_yields())
@@ -85,6 +93,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_startup_cot())
     asyncio.create_task(_startup_momentum())
     asyncio.create_task(_startup_geo())
+    asyncio.create_task(_startup_rate_tone())
     yield
     scheduler.shutdown()
 
@@ -226,4 +235,20 @@ async def geo_refresh_now():
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Geopolitical refresh failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/rate-tone")
+async def api_rate_tone():
+    state = db.get_rate_tone_state()
+    return JSONResponse(state or {})
+
+
+@app.post("/api/rate-tone-refresh-now")
+async def rate_tone_refresh_now():
+    try:
+        result = await asyncio.to_thread(run_rate_tone_refresh)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Rate tone refresh failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=502)

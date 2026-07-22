@@ -132,6 +132,19 @@ def init_db():
         conn.execute("ALTER TABLE geo_state ADD COLUMN reason TEXT")
     except sqlite3.OperationalError:
         pass  # column already exists
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rate_tone_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            bank TEXT NOT NULL,
+            meeting_date TEXT NOT NULL,
+            raw_score REAL NOT NULL,
+            gauge_score REAL NOT NULL,
+            reason TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -396,3 +409,29 @@ def get_geo_state() -> dict | None:
         "updated_at": row["updated_at"],
         "reason": row["reason"] if "reason" in keys else None,
     }
+
+
+def save_rate_tone_state(bank, meeting_date, raw_score, gauge_score, reason, updated_at):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO rate_tone_state (id, bank, meeting_date, raw_score, gauge_score, reason, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            bank=excluded.bank, meeting_date=excluded.meeting_date,
+            raw_score=excluded.raw_score, gauge_score=excluded.gauge_score,
+            reason=excluded.reason, updated_at=excluded.updated_at
+        """,
+        (bank, meeting_date, raw_score, gauge_score, reason, updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_rate_tone_state() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM rate_tone_state WHERE id = 1").fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return dict(row)

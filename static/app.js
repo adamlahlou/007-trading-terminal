@@ -710,3 +710,45 @@ if (geoBtn) {
 }
 
 loadGeoGauge();
+
+// ---- Rate decision tone gauge (Fed/BoE) ----
+async function loadRateToneGauge() {
+  const body = document.getElementById('rate-tone-gauge-body');
+  try {
+    const res = await fetch('/api/rate-tone');
+    const d = await res.json();
+    if (!d || d.gauge_score === undefined) {
+      body.innerHTML = `<div class="dim-small">No recent rate decision to analyze yet.</div>`;
+      return;
+    }
+
+    const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
+    const verdict = gbpusdVerdict(d.gauge_score, 0.15);
+
+    body.innerHTML = `
+      <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
+      <div class="gauge-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
+      <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
+      <div class="dim-small" style="margin-top:4px;">${d.bank} · ${d.meeting_date}</div>
+      <div class="dim-small" style="margin-top:2px;">${d.reason || ''}</div>
+    `;
+  } catch (e) {
+    body.innerHTML = `<div class="dim-small">Rate tone data unavailable: ${e.message}</div>`;
+  }
+}
+
+const rateToneBtn = document.getElementById('rate-tone-refresh-btn');
+if (rateToneBtn) {
+  rateToneBtn.addEventListener('click', async () => {
+    rateToneBtn.disabled = true;
+    rateToneBtn.textContent = 'REFRESHING...';
+    try {
+      await fetch('/api/rate-tone-refresh-now', { method: 'POST' });
+    } catch (e) { /* fall through, still reload cache below */ }
+    await loadRateToneGauge();
+    rateToneBtn.disabled = false;
+    rateToneBtn.textContent = 'REFRESH';
+  });
+}
+
+loadRateToneGauge();
