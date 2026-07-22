@@ -99,14 +99,20 @@ def _run_scan_locked() -> dict:
         last_candle_time = candle["time"]
 
     brick_dicts = [{"direction": b.direction, "open": b.open, "close": b.close, "formed_at": b.formed_at} for b in all_new_bricks]
+
+    if brick_dicts:
+        gauge_verdicts = get_gauge_verdicts()
+        total = len(gauge_verdicts)
+        for b in brick_dicts:
+            matching = sum(1 for _, v in gauge_verdicts if v == b["direction"])
+            b["confluence_matching"] = matching
+            b["confluence_total"] = total
+            b["confluence"] = f"{matching}/{total}"
+
     db.append_bricks(brick_dicts)
     db.save_state(BOX_SIZE, state.anchor, state.last_close, state.direction, last_candle_time)
 
     if brick_dicts:
-        gauge_verdicts = get_gauge_verdicts()
-        for b in brick_dicts:
-            matching = sum(1 for _, v in gauge_verdicts if v == b["direction"])
-            b["confluence"] = f"{matching}/{len(gauge_verdicts)}"
         notifier.send_brick_notification(brick_dicts)
 
     logger.info(f"Scan complete: {len(all_new_bricks)} new bricks, {len(candles)} candles processed")

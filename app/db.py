@@ -26,6 +26,13 @@ def init_db():
         )
         """
     )
+    # Safe migration: bricks table already exists in deployed DBs from
+    # before confluence tracking -- add the columns if not there yet.
+    for col_def in ("confluence_matching INTEGER", "confluence_total INTEGER"):
+        try:
+            conn.execute(f"ALTER TABLE bricks ADD COLUMN {col_def}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS engine_state (
@@ -160,9 +167,11 @@ def append_bricks(bricks: list[dict]):
     last_seq_row = conn.execute("SELECT MAX(seq) AS m FROM bricks").fetchone()
     next_seq = (last_seq_row["m"] or 0) + 1
     conn.executemany(
-        "INSERT INTO bricks (seq, direction, open_price, close_price, formed_at) VALUES (?, ?, ?, ?, ?)",
+        """INSERT INTO bricks (seq, direction, open_price, close_price, formed_at, confluence_matching, confluence_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
         [
-            (next_seq + i, b["direction"], b["open"], b["close"], b["formed_at"])
+            (next_seq + i, b["direction"], b["open"], b["close"], b["formed_at"],
+             b.get("confluence_matching"), b.get("confluence_total"))
             for i, b in enumerate(bricks)
         ],
     )
@@ -177,16 +186,19 @@ def get_recent_bricks(limit: int = 200) -> list[dict]:
     ).fetchall()
     conn.close()
     rows = list(reversed(rows))
-    return [
-        {
+    result = []
+    for r in rows:
+        keys = r.keys()
+        result.append({
             "seq": r["seq"],
             "direction": r["direction"],
             "open": r["open_price"],
             "close": r["close_price"],
             "formed_at": r["formed_at"],
-        }
-        for r in rows
-    ]
+            "confluence_matching": r["confluence_matching"] if "confluence_matching" in keys else None,
+            "confluence_total": r["confluence_total"] if "confluence_total" in keys else None,
+        })
+    return result
 
 
 def get_brick_count() -> int:

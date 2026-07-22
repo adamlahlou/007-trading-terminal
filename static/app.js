@@ -140,6 +140,16 @@ function drawBricks() {
       ctx.fill();
     }
 
+    // Gauge confluence marker: green if 2+ gauges agree with a bullish
+    // brick, red if 2+ agree with a bearish brick. Distinct from the
+    // brick's own white/blue coloring -- this is a separate signal.
+    if (b.confluence_matching !== null && b.confluence_matching !== undefined && b.confluence_matching >= 2) {
+      ctx.fillStyle = b.direction === 1 ? '#22c55e' : '#ef4444';
+      ctx.beginPath();
+      ctx.arc(x + brickW / 2, y + bh + 5, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     // Label the most recent brick with its actual date+time, so "how stale
     // is this" is always visible at a glance -- previously this only showed
     // the time, so an old brick sitting there for hours could easily be
