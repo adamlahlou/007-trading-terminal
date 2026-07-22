@@ -752,3 +752,29 @@ if (rateToneBtn) {
 }
 
 loadRateToneGauge();
+
+// ---- Single global refresh button ----
+const refreshAllBtn = document.getElementById('refresh-all-btn');
+if (refreshAllBtn) {
+  refreshAllBtn.addEventListener('click', async () => {
+    refreshAllBtn.disabled = true;
+    refreshAllBtn.classList.add('spinning');
+    try {
+      await fetch('/api/refresh-all', { method: 'POST' });
+    } catch (e) { /* fall through, still reload everything below */ }
+
+    await Promise.all([
+      loadBricks(),
+      loadCalendar(),
+      loadYields(),
+      loadNewsGauge(),
+      loadCotGauge(),
+      loadMomentumGauge(),
+      loadGeoGauge(),
+      loadRateToneGauge(),
+    ]);
+
+    refreshAllBtn.disabled = false;
+    refreshAllBtn.classList.remove('spinning');
+  });
+}

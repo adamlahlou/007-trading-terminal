@@ -268,3 +268,33 @@ async def rate_tone_refresh_now():
     except Exception as e:
         logger.error(f"Rate tone refresh failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.post("/api/refresh-all")
+async def refresh_all():
+    """One button to refresh everything -- runs every gauge/data refresh
+    concurrently and reports which ones succeeded or failed, rather than
+    needing eight separate buttons scattered across the page."""
+    jobs = {
+        "scan": run_scan,
+        "calendar": run_calendar_refresh,
+        "yields": run_yield_refresh,
+        "news": run_news_refresh,
+        "cot": run_cot_refresh,
+        "momentum": run_momentum_refresh,
+        "geo": run_geo_refresh,
+        "rate_tone": run_rate_tone_refresh,
+    }
+
+    async def _run(name, fn):
+        try:
+            await asyncio.to_thread(fn)
+            return name, True, None
+        except Exception as e:
+            logger.error(f"Refresh-all: {name} failed: {e}")
+            return name, False, str(e)
+
+    results = await asyncio.gather(*(_run(name, fn) for name, fn in jobs.items()))
+    return JSONResponse({
+        "results": {name: {"ok": ok, "error": err} for name, ok, err in results}
+    })

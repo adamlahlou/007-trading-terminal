@@ -82,25 +82,9 @@ canvas { display:block; width:100%; height:420px; }
   font-size: 10px; color: var(--dim); letter-spacing:0.03em;
 }
 .statusbar b { color: var(--amber); }
-#scan-now-btn {
-  background: #000; border: 1px solid var(--amber-dim); color: var(--amber);
-  font-family: inherit; font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
-  padding: 5px 12px; cursor: pointer;
-}
-#scan-now-btn:hover { border-color: var(--amber); }
-#scan-now-btn:disabled { opacity: 0.5; cursor: default; }
-
 /* ---- Macro calendar panel ---- */
 .macro-panel { padding: 14px 16px 12px; border-top: 1px solid var(--line); }
 .dim-small { font-size: 11px; color: var(--dim); }
-
-#calendar-refresh-btn {
-  background: #000; border: 1px solid var(--amber-dim); color: var(--amber);
-  font-family: inherit; font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
-  padding: 4px 10px; cursor: pointer;
-}
-#calendar-refresh-btn:hover { border-color: var(--amber); }
-#calendar-refresh-btn:disabled { opacity: 0.5; cursor: default; }
 
 .next-event-block {
   margin-top: 10px;
@@ -148,13 +132,25 @@ canvas { display:block; width:100%; height:420px; }
   .gauges-row { grid-template-columns: 1fr 1fr; }
 }
 .gauge-panel { padding: 10px 12px 12px; border: 1px solid var(--line); background: var(--panel); }
-#yields-refresh-btn {
-  background: #000; border: 1px solid var(--amber-dim); color: var(--amber);
-  font-family: inherit; font-size: 9px; font-weight: 600; letter-spacing: 0.05em;
-  padding: 3px 8px; cursor: pointer;
+.refresh-all-btn {
+  background: transparent;
+  border: 1px solid var(--amber-dim);
+  color: var(--amber);
+  font-size: 15px;
+  line-height: 1;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s;
 }
-#yields-refresh-btn:hover { border-color: var(--amber); }
-#yields-refresh-btn:disabled { opacity: 0.5; cursor: default; }
+.refresh-all-btn:hover { border-color: var(--amber); }
+.refresh-all-btn:disabled { opacity: 0.6; cursor: default; }
+.refresh-all-btn.spinning { animation: spin 0.8s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .gauge-track {
   position: relative;

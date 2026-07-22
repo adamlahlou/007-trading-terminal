@@ -20,6 +20,7 @@
       <div id="live-price" class="live-price">--</div>
       <div><span class="live-dot"></span>LIVE</div>
       <div class="clock" id="clock">--:--:--</div>
+      <button id="refresh-all-btn" class="refresh-all-btn" title="Refresh everything">↻</button>
     </div>
   </div>
 
@@ -45,7 +46,6 @@
     <div class="gauge-panel">
       <div class="panel-head">
         <div class="panel-title"><b>GBP TEMPERAMENT</b> — 10Y YIELD DIFF.</div>
-        <button id="yields-refresh-btn">REFRESH</button>
       </div>
       <div id="gauge-body"><div class="dim-small">Loading yield data...</div></div>
     </div>
@@ -53,7 +53,6 @@
     <div class="gauge-panel">
       <div class="panel-head">
         <div class="panel-title"><b>NEWS SENTIMENT</b> — GBP/USD</div>
-        <button id="news-refresh-btn">REFRESH</button>
       </div>
       <div id="news-gauge-body"><div class="dim-small">Loading news sentiment...</div></div>
       <div id="news-headlines" class="news-headlines"></div>
@@ -62,7 +61,6 @@
     <div class="gauge-panel">
       <div class="panel-head">
         <div class="panel-title"><b>COT POSITIONING</b> — GBP LEV. FUNDS</div>
-        <button id="cot-refresh-btn">REFRESH</button>
       </div>
       <div id="cot-gauge-body"><div class="dim-small">Loading COT data...</div></div>
     </div>
@@ -70,7 +68,6 @@
     <div class="gauge-panel">
       <div class="panel-head">
         <div class="panel-title"><b>US DATA MOMENTUM</b> — NFP/CPI</div>
-        <button id="momentum-refresh-btn">REFRESH</button>
       </div>
       <div id="momentum-gauge-body"><div class="dim-small">Loading momentum data...</div></div>
     </div>
@@ -78,7 +75,6 @@
     <div class="gauge-panel">
       <div class="panel-head">
         <div class="panel-title"><b>GLOBAL RISK</b> — GEOPOLITICAL</div>
-        <button id="geo-refresh-btn">REFRESH</button>
       </div>
       <div id="geo-gauge-body"><div class="dim-small">Loading global risk data...</div></div>
       <div id="geo-headlines" class="news-headlines"></div>
@@ -87,7 +83,6 @@
     <div class="gauge-panel">
       <div class="panel-head">
         <div class="panel-title"><b>RATE TONE</b> — FED/BOE</div>
-        <button id="rate-tone-refresh-btn">REFRESH</button>
       </div>
       <div id="rate-tone-gauge-body"><div class="dim-small">Loading rate tone data...</div></div>
     </div>
@@ -96,7 +91,6 @@
   <div class="macro-panel">
     <div class="panel-head">
       <div class="panel-title"><b>MACRO CALENDAR</b> — US / GB</div>
-      <button id="calendar-refresh-btn">REFRESH</button>
     </div>
 
     <div id="next-event-block" class="next-event-block">
@@ -110,7 +104,6 @@
     <div>SOURCE: <b>OANDA</b> · GRANULARITY: <b>15M</b> · METHOD: <b>TRADITIONAL</b></div>
     <div style="display:flex; align-items:center; gap:14px;">
       <span id="scan-status">STATUS: NOMINAL</span>
-      <button id="scan-now-btn">SCAN NOW</button>
     </div>
   </div>
 </div>
