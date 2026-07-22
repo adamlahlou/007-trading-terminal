@@ -1,3 +1,11 @@
+// Shared across every gauge so the verdict language is identical everywhere --
+// the whole point is you shouldn't have to interpret each gauge differently.
+function gbpusdVerdict(score, threshold = 0.15) {
+  if (score > threshold) return { text: 'BULLISH GBPUSD', color: 'var(--white)' };
+  if (score < -threshold) return { text: 'BEARISH GBPUSD', color: 'var(--blue)' };
+  return { text: 'NEUTRAL', color: 'var(--amber)' };
+}
+
 function tick() {
   const now = new Date();
   document.getElementById('clock').textContent = now.toLocaleTimeString('en-GB', { hour12: false });
@@ -404,16 +412,14 @@ async function loadYields() {
 
     const clamped = Math.max(-GAUGE_CLAMP, Math.min(GAUGE_CLAMP, d.spread));
     const pct = 50 + (clamped / GAUGE_CLAMP) * 50;
-
-    let label, labelColor;
-    if (d.spread > 0.3) { label = 'Leaning bullish (GBP)'; labelColor = 'var(--white)'; }
-    else if (d.spread < -0.3) { label = 'Leaning bearish (GBP)'; labelColor = 'var(--blue)'; }
-    else { label = 'Neutral'; labelColor = 'var(--amber)'; }
+    // spread is already in "positive = GBP favorable" terms, but the raw
+    // magnitude (~0.1-0.3 typical) needs its own threshold, not the shared 0.15 default
+    const verdict = gbpusdVerdict(clamped / GAUGE_CLAMP, 0.1);
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
       <div class="gauge-labels"><span>BEARISH (GBP)</span><span>NEUTRAL</span><span>BULLISH (GBP)</span></div>
-      <div class="gauge-read" style="color:${labelColor}">${label} · spread ${d.spread > 0 ? '+' : ''}${d.spread.toFixed(3)}</div>
+      <div class="gauge-read" style="color:${verdict.color}">${verdict.text} · spread ${d.spread > 0 ? '+' : ''}${d.spread.toFixed(3)}</div>
       <div class="gauge-numbers">
         <div>US 10Y: <b>${d.us_yield.toFixed(3)}%</b> <span class="dim-small">(${d.us_date})</span></div>
         <div>UK 10Y: <b>${d.uk_yield.toFixed(3)}%</b> <span class="dim-small">(${d.uk_date})</span></div>
@@ -461,21 +467,23 @@ async function loadNewsGauge() {
     }
 
     const pct = 50 + Math.max(-1, Math.min(1, d.score)) * 50;
-    let label = 'Neutral';
-    if (d.score > 0.15) label = 'Leaning positive';
-    else if (d.score < -0.15) label = 'Leaning negative';
+    const verdict = gbpusdVerdict(d.score);
+    const breakdown = (d.gbp_score !== null && d.gbp_score !== undefined)
+      ? ` (GBP news ${d.gbp_score > 0 ? '+' : ''}${d.gbp_score.toFixed(2)}, USD news ${d.usd_score > 0 ? '+' : ''}${d.usd_score.toFixed(2)})`
+      : '';
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
-      <div class="gauge-labels"><span>NEGATIVE</span><span>NEUTRAL</span><span>POSITIVE</span></div>
-      <div class="gauge-read" style="color:${sentimentColor(d.score)}">${label} · ${d.score > 0 ? '+' : ''}${d.score.toFixed(3)} (${d.article_count} articles)</div>
+      <div class="gauge-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
+      <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
+      <div class="dim-small" style="margin-top:4px;">${d.article_count} articles${breakdown}</div>
     `;
 
     const heads = d.headlines || [];
     if (heads.length) {
       headlinesEl.innerHTML = heads.map(h => `
         <div class="nh-row">
-          <span class="nh-sentiment" style="color:${sentimentColor(h.sentiment)}">${h.sentiment !== null ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--'}</span>
+          <span class="nh-sentiment" style="color:${sentimentColor(h.sentiment)}">${h.side ? `[${h.side}]` : ''} ${h.sentiment !== null ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--'}</span>
           <a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>
         </div>
       `).join('');
@@ -515,10 +523,9 @@ async function loadCotGauge() {
     }
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
-    let label = 'Neutral';
-    let labelColor = 'var(--amber)';
-    if (d.gauge_score > 0.1) { label = 'Leveraged funds net long GBP'; labelColor = 'var(--white)'; }
-    else if (d.gauge_score < -0.1) { label = 'Leveraged funds net short GBP'; labelColor = 'var(--blue)'; }
+    const verdict = gbpusdVerdict(d.gauge_score, 0.1);
+    const positioningNote = d.gauge_score > 0.1 ? 'Leveraged funds net long GBP'
+      : (d.gauge_score < -0.1 ? 'Leveraged funds net short GBP' : 'Leveraged funds roughly flat');
 
     let changeNote = '';
     if (d.prior_net !== null && d.prior_net !== undefined) {
@@ -530,7 +537,8 @@ async function loadCotGauge() {
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
       <div class="gauge-labels"><span>NET SHORT</span><span>NEUTRAL</span><span>NET LONG</span></div>
-      <div class="gauge-read" style="color:${labelColor}">${label}</div>
+      <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
+      <div class="dim-small" style="margin-top:2px;">${positioningNote}</div>
       <div class="gauge-numbers">
         <div>Long: <b>${Math.round(d.lev_long).toLocaleString()}</b></div>
         <div>Short: <b>${Math.round(d.lev_short).toLocaleString()}</b></div>
@@ -571,15 +579,15 @@ async function loadMomentumGauge() {
     }
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
-    let label = 'Neutral';
-    let labelColor = 'var(--amber)';
-    if (d.gauge_score > 0.15) { label = 'Cooling US data (GBPUSD supportive)'; labelColor = 'var(--white)'; }
-    else if (d.gauge_score < -0.15) { label = 'Hot US data (USD supportive)'; labelColor = 'var(--blue)'; }
+    const verdict = gbpusdVerdict(d.gauge_score);
+    const dataNote = d.gauge_score > 0.15 ? 'Cooling US data'
+      : (d.gauge_score < -0.15 ? 'Hot US data' : 'US data roughly in line');
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
       <div class="gauge-labels"><span>HOT (USD+)</span><span>NEUTRAL</span><span>COOL (GBP+)</span></div>
-      <div class="gauge-read" style="color:${labelColor}">${label}</div>
+      <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
+      <div class="dim-small" style="margin-top:2px;">${dataNote}</div>
       <div class="gauge-numbers">
         <div>CPI YoY: <b>${d.cpi_yoy}%</b> <span class="dim-small">(${d.cpi_date})</span></div>
         <div>NFP: <b>${d.nfp_change > 0 ? '+' : ''}${d.nfp_change}k</b> <span class="dim-small">(${d.nfp_date})</span></div>

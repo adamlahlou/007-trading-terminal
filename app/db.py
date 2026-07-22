@@ -76,6 +76,13 @@ def init_db():
         )
         """
     )
+    # Safe migration: news_state already exists in deployed DBs from before
+    # the GBP/USD split -- add the new columns if they're not there yet.
+    for col_def in ("gbp_score REAL", "usd_score REAL"):
+        try:
+            conn.execute(f"ALTER TABLE news_state ADD COLUMN {col_def}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS cot_state (
@@ -244,17 +251,18 @@ def get_yield_state() -> dict | None:
     return dict(row)
 
 
-def save_news_state(score, article_count, headlines, updated_at):
+def save_news_state(score, article_count, headlines, updated_at, gbp_score=None, usd_score=None):
     conn = get_conn()
     conn.execute(
         """
-        INSERT INTO news_state (id, score, article_count, headlines_json, updated_at)
-        VALUES (1, ?, ?, ?, ?)
+        INSERT INTO news_state (id, score, article_count, headlines_json, updated_at, gbp_score, usd_score)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             score=excluded.score, article_count=excluded.article_count,
-            headlines_json=excluded.headlines_json, updated_at=excluded.updated_at
+            headlines_json=excluded.headlines_json, updated_at=excluded.updated_at,
+            gbp_score=excluded.gbp_score, usd_score=excluded.usd_score
         """,
-        (score, article_count, json.dumps(headlines), updated_at),
+        (score, article_count, json.dumps(headlines), updated_at, gbp_score, usd_score),
     )
     conn.commit()
     conn.close()
@@ -266,11 +274,14 @@ def get_news_state() -> dict | None:
     conn.close()
     if row is None:
         return None
+    keys = row.keys()
     return {
         "score": row["score"],
         "article_count": row["article_count"],
         "headlines": json.loads(row["headlines_json"]),
         "updated_at": row["updated_at"],
+        "gbp_score": row["gbp_score"] if "gbp_score" in keys else None,
+        "usd_score": row["usd_score"] if "usd_score" in keys else None,
     }
 
 

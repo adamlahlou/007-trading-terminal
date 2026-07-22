@@ -90,10 +90,13 @@ def run_yield_refresh() -> dict:
 
 
 def run_news_refresh() -> dict:
-    result = marketaux_client.fetch_news_sentiment()
+    result = marketaux_client.fetch_combined_sentiment()
     now = datetime.now(timezone.utc).isoformat()
-    db.save_news_state(result["score"], result["article_count"], result["headlines"], now)
-    logger.info(f"News refresh: score {result['score']} across {result['article_count']} articles")
+    db.save_news_state(
+        result["gauge_score"], result["article_count"], result["headlines"], now,
+        gbp_score=result["gbp_score"], usd_score=result["usd_score"],
+    )
+    logger.info(f"News refresh: gauge {result['gauge_score']} (GBP {result['gbp_score']}, USD {result['usd_score']}) across {result['article_count']} articles")
     return result
 
 
