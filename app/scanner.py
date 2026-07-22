@@ -32,6 +32,47 @@ def run_scan() -> dict:
         _scan_lock.release()
 
 
+def _gauge_verdict(score, threshold=0.15):
+    """-1/0/1 for bearish/neutral/bullish, matching the same thresholds
+    used on the dashboard so email confluence matches what you'd see there."""
+    if score is None:
+        return 0
+    if score > threshold:
+        return 1
+    if score < -threshold:
+        return -1
+    return 0
+
+
+def get_gauge_verdicts() -> list[tuple[str, int]]:
+    """Returns [(gauge_name, verdict)] for every gauge that currently has
+    data, verdict in {-1, 0, 1}. Only includes gauges with real data --
+    a gauge that's never successfully fetched isn't counted either way."""
+    verdicts = []
+
+    yield_state = db.get_yield_state()
+    if yield_state:
+        verdicts.append(("Yield", _gauge_verdict(yield_state["spread"], 0.1)))
+
+    news_state = db.get_news_state()
+    if news_state:
+        verdicts.append(("News", _gauge_verdict(news_state["score"], 0.15)))
+
+    cot_state = db.get_cot_state()
+    if cot_state:
+        verdicts.append(("COT", _gauge_verdict(cot_state["gauge_score"], 0.1)))
+
+    momentum_state = db.get_momentum_state()
+    if momentum_state:
+        verdicts.append(("Momentum", _gauge_verdict(momentum_state["gauge_score"], 0.15)))
+
+    geo_state = db.get_geo_state()
+    if geo_state:
+        verdicts.append(("Geo", _gauge_verdict(geo_state["gauge_score"], 0.15)))
+
+    return verdicts
+
+
 def _run_scan_locked() -> dict:
     saved = db.load_state(BOX_SIZE)
     state = RenkoState(
@@ -60,7 +101,13 @@ def _run_scan_locked() -> dict:
     brick_dicts = [{"direction": b.direction, "open": b.open, "close": b.close, "formed_at": b.formed_at} for b in all_new_bricks]
     db.append_bricks(brick_dicts)
     db.save_state(BOX_SIZE, state.anchor, state.last_close, state.direction, last_candle_time)
-    notifier.send_brick_notification(brick_dicts)
+
+    if brick_dicts:
+        gauge_verdicts = get_gauge_verdicts()
+        for b in brick_dicts:
+            matching = sum(1 for _, v in gauge_verdicts if v == b["direction"])
+            b["confluence"] = f"{matching}/{len(gauge_verdicts)}"
+        notifier.send_brick_notification(brick_dicts)
 
     logger.info(f"Scan complete: {len(all_new_bricks)} new bricks, {len(candles)} candles processed")
     return {

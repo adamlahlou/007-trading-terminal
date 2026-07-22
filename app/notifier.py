@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import logging
 import requests
+from datetime import datetime, timezone
 
 logger = logging.getLogger("007-terminal")
 
@@ -13,13 +14,22 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "write2adaml@gmail.com")
 # Resend's shared sandbox sender -- works immediately with no domain setup.
 # If you later verify your own domain on Resend, swap this for your address.
-EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "007 Trading Terminal <onboarding@resend.dev>")
+EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "One Trading Terminal <onboarding@resend.dev>")
+
+
+def _fmt_time(iso_str: str) -> str:
+    try:
+        t = datetime.strptime(iso_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        return t.strftime("%d %b, %H:%M UTC")
+    except Exception:
+        return iso_str
 
 
 def send_brick_notification(bricks: list[dict]):
-    """bricks: list of {direction, open, close, formed_at}. Silently skips
-    if email isn't configured, and never raises -- a failed email should
-    never break a scan."""
+    """bricks: list of {direction, open, close, formed_at, confluence}.
+    Kept deliberately minimal -- one line per brick, no raw history dump.
+    Silently skips if email isn't configured, and never raises -- a failed
+    email should never break a scan."""
     if not RESEND_API_KEY:
         return
     if not bricks:
@@ -28,10 +38,18 @@ def send_brick_notification(bricks: list[dict]):
     try:
         lines = []
         for b in bricks:
-            arrow = "UP" if b["direction"] == 1 else "DOWN"
-            lines.append(f"{arrow}  {b['open']:.5f} -> {b['close']:.5f}  ({b['formed_at']})")
-        body = "New GBP/USD Renko brick(s) formed:\n\n" + "\n".join(lines)
-        subject = f"007 Terminal: {len(bricks)} new brick(s)" if len(bricks) > 1 else "007 Terminal: new brick"
+            verdict = "BULLISH" if b["direction"] == 1 else "BEARISH"
+            confluence = b.get("confluence", "?/?")
+            lines.append(
+                f"{verdict} block detected\n"
+                f"Price: {b['close']:.5f}\n"
+                f"Time: {_fmt_time(b['formed_at'])}\n"
+                f"Gauge confluence: {confluence}"
+            )
+        body = "\n\n---\n\n".join(lines)
+        subject = f"{('BULLISH' if bricks[0]['direction'] == 1 else 'BEARISH')} block — {bricks[0]['close']:.5f}"
+        if len(bricks) > 1:
+            subject = f"{len(bricks)} new blocks"
 
         resp = requests.post(
             "https://api.resend.com/emails",
