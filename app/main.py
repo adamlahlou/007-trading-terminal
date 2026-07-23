@@ -318,3 +318,12 @@ async def api_backtest(days: int = 45, reversal_only: bool = False, continuation
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/live-trades")
+async def api_live_trades():
+    """Current live position state + recent entry/exit events, for the
+    green/red dots on the chart and a status readout."""
+    state = db.get_live_trade_state()
+    events = db.get_live_trade_events(limit=200)
+    return JSONResponse({"state": state, "events": events})

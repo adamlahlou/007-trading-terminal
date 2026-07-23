@@ -145,6 +145,33 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS live_trade_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            position INTEGER NOT NULL DEFAULT 0,
+            entry_price REAL,
+            stop_price REAL,
+            favorable_bricks INTEGER NOT NULL DEFAULT 0,
+            last_closed_direction INTEGER,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS live_trade_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            direction INTEGER NOT NULL,
+            price REAL NOT NULL,
+            event_time TEXT NOT NULL,
+            brick_seq INTEGER,
+            reason TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -177,9 +204,12 @@ def save_state(box_size: float, anchor, last_close, direction: int, last_candle_
     conn.close()
 
 
-def append_bricks(bricks: list[dict]):
+def append_bricks(bricks: list[dict]) -> list[int]:
+    """Returns the seq number assigned to each brick, in the same order,
+    so callers (the live trade tracker) can tag exactly which brick an
+    entry/exit event belongs to."""
     if not bricks:
-        return
+        return []
     conn = get_conn()
     last_seq_row = conn.execute("SELECT MAX(seq) AS m FROM bricks").fetchone()
     next_seq = (last_seq_row["m"] or 0) + 1
@@ -194,6 +224,7 @@ def append_bricks(bricks: list[dict]):
     )
     conn.commit()
     conn.close()
+    return [next_seq + i for i in range(len(bricks))]
 
 
 def get_recent_bricks(limit: int = 200) -> list[dict]:
@@ -435,3 +466,49 @@ def get_rate_tone_state() -> dict | None:
     if row is None:
         return None
     return dict(row)
+
+
+def save_live_trade_state(position, entry_price, stop_price, favorable_bricks, last_closed_direction, updated_at):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO live_trade_state (id, position, entry_price, stop_price, favorable_bricks, last_closed_direction, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            position=excluded.position, entry_price=excluded.entry_price,
+            stop_price=excluded.stop_price, favorable_bricks=excluded.favorable_bricks,
+            last_closed_direction=excluded.last_closed_direction, updated_at=excluded.updated_at
+        """,
+        (position, entry_price, stop_price, favorable_bricks, last_closed_direction, updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_live_trade_state() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM live_trade_state WHERE id = 1").fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def add_live_trade_event(event_type, direction, price, event_time, brick_seq, reason, created_at):
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO live_trade_events (event_type, direction, price, event_time, brick_seq, reason, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (event_type, direction, price, event_time, brick_seq, reason, created_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_live_trade_events(limit: int = 200) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM live_trade_events ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in reversed(rows)]

@@ -34,7 +34,7 @@ function roundedRectPath(ctx, x, y, w, h, r) {
 
 // Shared state, updated independently by the bricks load (30min-ish) and
 // the live price poll (every 3s) -- drawBricks() is re-run after either changes.
-let state = { bricks: [], boxSize: 0.0022, livePrice: null };
+let state = { bricks: [], boxSize: 0.0022, livePrice: null, liveTradeEventsBySeq: {} };
 
 function drawBricks() {
   const { bricks, livePrice, boxSize } = state;
@@ -149,6 +149,32 @@ function drawBricks() {
       ctx.arc(x + brickW / 2, y + bh + 5, 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    // Live trade entry/exit markers: small triangles ABOVE the brick
+    // (opposite side from the confluence dots, and a different shape, so
+    // the two signals never visually collide). Green up-triangle = entry,
+    // red down-triangle = exit. A brick can have both (a reversal closes
+    // the old position and opens the new one on the same brick) -- offset
+    // them horizontally if so.
+    const tradeEvents = state.liveTradeEventsBySeq[b.seq] || [];
+    tradeEvents.forEach((ev, idx) => {
+      const isEntry = ev.event_type === 'entry';
+      const tx = x + brickW / 2 + (tradeEvents.length > 1 ? (idx === 0 ? -5 : 5) : 0);
+      const ty = y - 12;
+      ctx.fillStyle = isEntry ? '#22c55e' : '#ef4444';
+      ctx.beginPath();
+      if (isEntry) {
+        ctx.moveTo(tx, ty - 4);
+        ctx.lineTo(tx - 4, ty + 3);
+        ctx.lineTo(tx + 4, ty + 3);
+      } else {
+        ctx.moveTo(tx, ty + 4);
+        ctx.lineTo(tx - 4, ty - 3);
+        ctx.lineTo(tx + 4, ty - 3);
+      }
+      ctx.closePath();
+      ctx.fill();
+    });
 
     // Label the most recent brick with its actual date+time, so "how stale
     // is this" is always visible at a glance -- previously this only showed
@@ -634,6 +660,37 @@ async function loadRateToneGauge() {
 
 loadRateToneGauge();
 
+// ---- Live trade events (entry/exit markers on the chart) ----
+async function loadLiveTrades() {
+  const statusEl = document.getElementById('live-trade-status');
+  try {
+    const res = await fetch('/api/live-trades');
+    const d = await res.json();
+    const bySeq = {};
+    for (const ev of (d.events || [])) {
+      if (ev.brick_seq === null || ev.brick_seq === undefined) continue;
+      if (!bySeq[ev.brick_seq]) bySeq[ev.brick_seq] = [];
+      bySeq[ev.brick_seq].push(ev);
+    }
+    state.liveTradeEventsBySeq = bySeq;
+    drawBricks();
+
+    const s = d.state;
+    if (statusEl) {
+      if (!s || s.position === 0) {
+        statusEl.textContent = 'Live rule: FLAT (waiting for a qualifying entry)';
+      } else {
+        const dir = s.position === 1 ? 'LONG' : 'SHORT';
+        statusEl.textContent = `Live rule: ${dir} from ${s.entry_price?.toFixed(5)} · stop ${s.stop_price?.toFixed(5)}`;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load live trade events:', e);
+    if (statusEl) statusEl.textContent = 'Live position unavailable';
+  }
+}
+loadLiveTrades();
+
 // ---- Single global refresh button ----
 const refreshAllBtn = document.getElementById('refresh-all-btn');
 if (refreshAllBtn) {
@@ -653,6 +710,7 @@ if (refreshAllBtn) {
       loadMomentumGauge(),
       loadGeoGauge(),
       loadRateToneGauge(),
+      loadLiveTrades(),
     ]);
 
     refreshAllBtn.disabled = false;

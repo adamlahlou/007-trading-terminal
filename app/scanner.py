@@ -3,7 +3,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client, rate_tone_client
+from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client, rate_tone_client, live_trader
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -96,9 +96,11 @@ def _run_scan_locked() -> dict:
 
     logger.info(f"Fetched {len(candles)} new candles")
 
+    candle_groups = []  # (candle, [brick, ...]) per candle, in order
     all_new_bricks = []
     for candle in candles:
         new_bricks = process_candle(state, candle)
+        candle_groups.append((candle, new_bricks))
         all_new_bricks.extend(new_bricks)
         last_candle_time = candle["time"]
 
@@ -113,11 +115,25 @@ def _run_scan_locked() -> dict:
             b["confluence_total"] = total
             b["confluence"] = f"{matching}/{total}"
 
-    db.append_bricks(brick_dicts)
+    seqs = db.append_bricks(brick_dicts)
     db.save_state(BOX_SIZE, state.anchor, state.last_close, state.direction, last_candle_time)
 
     if brick_dicts:
         notifier.send_brick_notification(brick_dicts)
+
+    # Re-associate each brick with the seq it was actually assigned, grouped
+    # back by candle, then run the live majority-override trade simulation
+    # (reuses the exact validated backtest logic -- see live_trader.py).
+    if candle_groups:
+        seq_iter = iter(seqs)
+        candle_brick_seq_groups = [
+            (candle, [(b, next(seq_iter)) for b in bricks])
+            for candle, bricks in candle_groups
+        ]
+        try:
+            live_trader.process_scan(candle_brick_seq_groups, BOX_SIZE)
+        except Exception as e:
+            logger.error(f"Live trade simulation failed: {e}")
 
     logger.info(f"Scan complete: {len(all_new_bricks)} new bricks, {len(candles)} candles processed")
     return {
