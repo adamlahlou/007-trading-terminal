@@ -90,6 +90,52 @@ def _fetch_recent(series_id: str, limit: int = 14) -> list[tuple[float, str]]:
     return out
 
 
+def _fetch_range(series_id: str, start_date: str, end_date: str) -> list[tuple[float, str]]:
+    """Returns [(value, date)] ascending, for the given date range (YYYY-MM-DD).
+    Used for backtesting -- reconstructing what the series actually said at
+    each historical point, not just the latest value."""
+    if not FRED_API_KEY:
+        raise RuntimeError("FRED_API_KEY is not set")
+
+    resp = requests.get(
+        BASE_URL,
+        params={
+            "series_id": series_id,
+            "api_key": FRED_API_KEY,
+            "file_type": "json",
+            "sort_order": "asc",
+            "observation_start": start_date,
+            "observation_end": end_date,
+        },
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    out = []
+    for obs in data.get("observations", []):
+        if obs.get("value") not in (None, ".", ""):
+            out.append((float(obs["value"]), obs["date"]))
+    return out
+
+
+def fetch_yield_history(start_date: str, end_date: str) -> dict:
+    """Returns {us: [(value,date)], uk: [(value,date)]} for reconstructing
+    the yield spread at any point in the range."""
+    return {
+        "us": _fetch_range(US_10Y_SERIES, start_date, end_date),
+        "uk": _fetch_range(UK_10Y_SERIES, start_date, end_date),
+    }
+
+
+def fetch_momentum_history(start_date: str, end_date: str) -> dict:
+    """Returns {cpi: [(value,date)], nfp: [(value,date)]} -- callers compute
+    YoY CPI / month-over-month NFP change themselves per point in time."""
+    return {
+        "cpi": _fetch_range(US_CPI_SERIES, start_date, end_date),
+        "nfp": _fetch_range(US_NFP_SERIES, start_date, end_date),
+    }
+
+
 def fetch_data_momentum() -> dict:
     """
     Returns {cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score} -- US

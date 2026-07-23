@@ -301,14 +301,19 @@ async def refresh_all():
 
 
 @app.get("/api/backtest")
-async def api_backtest(days: int = 45, reversal_only: bool = False):
+async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False):
     """On-demand only -- not scheduled. Fetches historical OANDA data and
     simulates the Renko trade rules against it. Runs in a thread since it
     does real (slow-ish) API calls and computation.
     reversal_only=true tests the variant that only re-enters on a genuine
-    reversal brick, rather than any same-direction continuation brick."""
+    reversal brick, rather than any same-direction continuation brick.
+    continuation_override=majority|momentum_weighted (only meaningful with
+    reversal_only=true) allows a same-direction re-entry anyway if the
+    reconstructed yield/COT/momentum gauges support it at that point in time.
+    gate_all_entries=true requires 2+/3 gauge agreement for EVERY entry,
+    including genuine reversal bricks -- the strictest of the three modes."""
     try:
-        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only)
+        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")

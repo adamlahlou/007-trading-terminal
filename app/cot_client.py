@@ -28,6 +28,43 @@ def _find_field(row: dict, *must_contain: str) -> str:
     raise KeyError(f"No field found containing {must_contain}. Available fields: {list(row.keys())}")
 
 
+def fetch_cot_history(start_date: str, end_date: str) -> list[dict]:
+    """Returns [{report_date, lev_long, lev_short, gauge_score}] ascending
+    by date, for reconstructing what COT positioning actually said at any
+    point in a backtest window (weekly data, so expect one row per week)."""
+    headers = {"User-Agent": "one-trading-terminal/1.0"}
+    if SOCRATA_APP_TOKEN:
+        headers["X-App-Token"] = SOCRATA_APP_TOKEN
+    params = {
+        "$where": (
+            f"cftc_contract_market_code='{GBP_CONTRACT_CODE}' AND "
+            f"report_date_as_yyyy_mm_dd between '{start_date}T00:00:00' and '{end_date}T23:59:59'"
+        ),
+        "$order": "report_date_as_yyyy_mm_dd ASC",
+        "$limit": 200,
+    }
+    resp = requests.get(BASE_URL, headers=headers, params=params, timeout=20)
+    resp.raise_for_status()
+    rows = resp.json()
+
+    out = []
+    for row in rows:
+        long_field = _find_field(row, "lev", "long")
+        short_field = _find_field(row, "lev", "short")
+        date_field = _find_field(row, "report", "date")
+        lev_long = float(row[long_field])
+        lev_short = float(row[short_field])
+        total = lev_long + lev_short
+        gauge_score = round((lev_long - lev_short) / total, 4) if total else 0.0
+        out.append({
+            "report_date": str(row[date_field])[:10],
+            "lev_long": lev_long,
+            "lev_short": lev_short,
+            "gauge_score": gauge_score,
+        })
+    return out
+
+
 def fetch_cot_data() -> dict:
     """
     Returns {report_date, lev_long, lev_short, lev_net, prior_net, gauge_score}.
