@@ -13,7 +13,7 @@ that direction.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
-from . import db
+from . import db, notifier
 from .backtest import INITIAL_STOP_PIPS, HOLD_BRICKS_BEFORE_TRAILING, TRAIL_BOXES, PIP, _continuation_allowed
 
 
@@ -114,4 +114,8 @@ def process_scan(candle_brick_groups: list[tuple[dict, list[tuple[object, int]]]
             e["event_type"], e["direction"], e["price"], e["event_time"],
             e["brick_seq"], e["reason"], now_iso,
         )
+        try:
+            notifier.send_trade_signal_notification(e)
+        except Exception:
+            pass  # a failed signal email should never break the scan
     return events
