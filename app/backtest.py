@@ -32,7 +32,19 @@ HOLD_BRICKS_BEFORE_TRAILING = 2  # don't move the stop at all until this many fa
 TRAIL_BOXES = 1.0                 # once trailing starts, trail this tight
 
 
-def run_backtest(days: int = 45, box_size: float = 0.0022) -> dict:
+def run_backtest(days: int = 45, box_size: float = 0.0022, require_reversal_to_reenter: bool = False) -> dict:
+    """
+    require_reversal_to_reenter=False (default): enter on any new brick
+    while flat, same direction or not -- matches "enter on every brick".
+
+    require_reversal_to_reenter=True: after a position closes (stop or
+    otherwise), don't re-enter on a brick continuing the SAME direction you
+    just exited -- only re-enter once a genuine opposite-direction (reversal)
+    brick appears. Skips same-direction continuation bricks entirely until
+    that happens, which may mean missing part of an extended trend after
+    being stopped out, in exchange for avoiding instant same-direction
+    whipsaw re-entries.
+    """
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days)
 
@@ -47,10 +59,11 @@ def run_backtest(days: int = 45, box_size: float = 0.0022) -> dict:
     entry_price = None
     stop_price = None
     favorable_bricks = 0
+    last_closed_direction = None
     trades = []
 
     def close_trade(exit_price, exit_time, reason):
-        nonlocal position, entry_price, stop_price, favorable_bricks
+        nonlocal position, entry_price, stop_price, favorable_bricks, last_closed_direction
         pips = (exit_price - entry_price) / PIP if position == 1 else (entry_price - exit_price) / PIP
         trades.append({
             "direction": "long" if position == 1 else "short",
@@ -60,6 +73,7 @@ def run_backtest(days: int = 45, box_size: float = 0.0022) -> dict:
             "pips": round(pips, 1),
             "reason": reason,
         })
+        last_closed_direction = position
         position = None
         entry_price = None
         stop_price = None
@@ -79,6 +93,8 @@ def run_backtest(days: int = 45, box_size: float = 0.0022) -> dict:
         # 3) Walk each newly formed brick (already in correct path order)
         for b in new_bricks:
             if position is None:
+                if require_reversal_to_reenter and last_closed_direction is not None and b.direction == last_closed_direction:
+                    continue  # same-direction continuation after a close -- wait for a genuine reversal instead
                 position = b.direction
                 entry_price = b.close
                 stop_price = entry_price - initial_stop_dist if position == 1 else entry_price + initial_stop_dist
@@ -109,12 +125,13 @@ def run_backtest(days: int = 45, box_size: float = 0.0022) -> dict:
         last_close = candles[-1]["close"]
         close_trade(last_close, candles[-1]["time"], "end_of_window")
 
-    return _summarize(trades, days)
+    return _summarize(trades, days, require_reversal_to_reenter)
 
 
-def _summarize(trades: list[dict], days: int) -> dict:
+def _summarize(trades: list[dict], days: int, require_reversal_to_reenter: bool) -> dict:
+    mode = "reversal_only_reentry" if require_reversal_to_reenter else "any_brick_reentry"
     if not trades:
-        return {"days": days, "total_trades": 0, "message": "No trades triggered in this window"}
+        return {"days": days, "mode": mode, "total_trades": 0, "message": "No trades triggered in this window"}
 
     wins = [t for t in trades if t["pips"] > 0]
     losses = [t for t in trades if t["pips"] <= 0]
@@ -137,6 +154,7 @@ def _summarize(trades: list[dict], days: int) -> dict:
 
     return {
         "days": days,
+        "mode": mode,
         "total_trades": len(trades),
         "wins": len(wins),
         "losses": len(losses),
