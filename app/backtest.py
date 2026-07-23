@@ -6,9 +6,10 @@ you're actually trading, not a separate approximation.
 
 Trade rules being tested:
   - Enter flat -> take every new brick's direction as an entry
-  - Initial stop: 44 pips (kept fixed, not 50, as a clean default -- see note below)
-  - Trailing stop: 1.4 boxes behind the latest favorable brick close, until
-    5+ bricks have been captured favorably, then loosens to 2.0 boxes
+  - Initial stop: 52 pips (fixed, per his stated preference for a bit more breathing room)
+  - Trailing stop: the stop stays completely unmoved until the trade has
+    captured 2 favorable bricks; from that point on, it trails tightly at
+    1 brick behind the latest favorable brick close
   - No fixed take-profit -- only the trailing stop closes a winning trade
 
 Honest limitations (worth knowing before trusting the numbers):
@@ -18,8 +19,7 @@ Honest limitations (worth knowing before trusting the numbers):
   - When multiple bricks form from a single candle, they're processed in
     the same path-order the live engine already uses (open->low->high->close
     or open->high->low->close), not literally simultaneously
-  - 44 pips (not 44-50) is used as a single fixed number for a clean test --
-    real usage might vary this
+  - 52 pips is used as a single fixed number for a clean test
 """
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
@@ -27,10 +27,9 @@ from . import oanda_client
 from .renko import RenkoState, process_candle
 
 PIP = 0.0001
-INITIAL_STOP_PIPS = 44
-BASE_TRAIL_BOXES = 1.4
-LOOSEN_TRAIL_BOXES = 2.0
-LOOSEN_AFTER_BRICKS = 5
+INITIAL_STOP_PIPS = 52
+HOLD_BRICKS_BEFORE_TRAILING = 2  # don't move the stop at all until this many favorable bricks
+TRAIL_BOXES = 1.0                 # once trailing starts, trail this tight
 
 
 def run_backtest(days: int = 45, box_size: float = 0.0022) -> dict:
@@ -86,13 +85,14 @@ def run_backtest(days: int = 45, box_size: float = 0.0022) -> dict:
                 favorable_bricks = 0
             elif b.direction == position:
                 favorable_bricks += 1
-                trail_boxes = BASE_TRAIL_BOXES if favorable_bricks < LOOSEN_AFTER_BRICKS else LOOSEN_TRAIL_BOXES
-                trail_dist = trail_boxes * box_size
-                candidate_stop = b.close - trail_dist if position == 1 else b.close + trail_dist
-                if position == 1:
-                    stop_price = max(stop_price, candidate_stop)
-                else:
-                    stop_price = min(stop_price, candidate_stop)
+                if favorable_bricks >= HOLD_BRICKS_BEFORE_TRAILING:
+                    trail_dist = TRAIL_BOXES * box_size
+                    candidate_stop = b.close - trail_dist if position == 1 else b.close + trail_dist
+                    if position == 1:
+                        stop_price = max(stop_price, candidate_stop)
+                    else:
+                        stop_price = min(stop_price, candidate_stop)
+                # else: still within the hold period -- stop stays put at its initial level
             else:
                 # Reversal brick against an open position -- shouldn't
                 # normally happen since the stop-check above should have
