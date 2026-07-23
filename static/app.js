@@ -12,8 +12,17 @@ function tick() {
 }
 setInterval(tick, 1000); tick();
 
+// OANDA labels a candle by when it OPENED, not when it closed -- a candle
+// timestamped 14:45 actually covers 14:45-15:00, so it doesn't really exist
+// until 15:00. Add the 15-min candle duration so displayed times reflect
+// when the brick actually completed, not when its underlying candle opened.
+function brickCompletionTime(formedAtIso) {
+  const t = new Date(formedAtIso.replace(/(\.\d+)?Z?$/, 'Z'));
+  return new Date(t.getTime() + 15 * 60 * 1000);
+}
+
 function timeAgo(isoString) {
-  const t = new Date(isoString.replace(/(\.\d+)?Z$/, 'Z')).getTime();
+  const t = brickCompletionTime(isoString).getTime();
   const diffMin = Math.floor((Date.now() - t) / 60000);
   if (diffMin < 1) return "just now";
   if (diffMin < 60) return `${diffMin}m ago`;
@@ -77,10 +86,10 @@ function drawBricks() {
     return level;
   });
 
-  // Reserve half a row of headroom on both ends so the pending ghost bar
-  // (which can sit half a level beyond the last brick) never clips.
-  const minLevel = Math.min(...levels, 0) - 0.5;
-  const maxLevel = Math.max(...levels, 0) + 0.5;
+  // Reserve headroom on both ends so the pending ghost bar (which can now
+  // sit up to ~1 level beyond the last brick, for clearer separation) never clips.
+  const minLevel = Math.min(...levels, 0) - 1.2;
+  const maxLevel = Math.max(...levels, 0) + 1.2;
   const numRows = maxLevel - minLevel + 1;
   const brickH = Math.min(28, (h - vPad * 2) / numRows);
   const yFor = (lvl) => vPad + (lvl - minLevel) * brickH;
@@ -181,7 +190,7 @@ function drawBricks() {
     // the time, so an old brick sitting there for hours could easily be
     // misread as being from today.
     if (i === shown.length - 1) {
-      const t = new Date(b.formed_at.replace(/(\.\d+)?Z?$/, 'Z'));
+      const t = brickCompletionTime(b.formed_at);
       const datePart = t.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
       let timePart = t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
       timePart = timePart.replace(' ', '').toLowerCase(); // "11:30 AM" -> "11:30am"
@@ -197,21 +206,22 @@ function drawBricks() {
 
   // Pending "ghost" bar: shows whether live price is currently above or
   // below the last confirmed brick's close, since it takes a full box move
-  // to actually form the next brick. Half-height, faint, in the next slot.
+  // to actually form the next brick. Positioned clearly above/below the
+  // last brick (not spanning from its own edge) so the direction reads
+  // unambiguously at a glance.
   if (livePrice != null) {
     const lastBrick = shown[shown.length - 1];
     const lastLevel = levels[levels.length - 1];
     const diff = livePrice - lastBrick.close;
     const pendingUp = diff >= 0;
-    const pendingLevel = lastLevel + (pendingUp ? -0.5 : 0.5);
+    const pendingLevel = lastLevel + (pendingUp ? -0.85 : 0.85);
 
     const x = padding + shown.length * slotW + (slotW - brickW) / 2;
-    const yStart = yFor(lastLevel);
-    const yEnd = yFor(pendingLevel);
-    const top = Math.min(yStart, yEnd);
-    const barH = Math.abs(yEnd - yStart);
+    const ghostH = brickH * 0.6;
+    const centerY = yFor(pendingLevel);
+    const top = centerY - ghostH / 2;
 
-    roundedRectPath(ctx, x, top, brickW, barH, radius);
+    roundedRectPath(ctx, x, top, brickW, ghostH, radius);
     ctx.fillStyle = pendingUp ? 'rgba(234,230,218,0.14)' : 'rgba(31,111,235,0.18)';
     ctx.fill();
     ctx.strokeStyle = pendingUp ? 'rgba(234,230,218,0.5)' : 'rgba(255,176,0,0.55)';
