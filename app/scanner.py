@@ -3,7 +3,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client, rate_tone_client, live_trader
+from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client, rate_tone_client, live_trader, freenews_client
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
@@ -197,24 +197,24 @@ def run_momentum_refresh() -> dict:
 
 
 def run_geo_refresh() -> dict:
-    result = marketaux_client.fetch_geopolitical_sentiment()
+    headlines = freenews_client.fetch_geopolitical_headlines()
     now = datetime.now(timezone.utc).isoformat()
 
-    score = result["gauge_score"]
+    score = 0.0  # neutral fallback -- no naive sentiment average available
+    # from this source (unlike the old Marketaux path), so if the LLM call
+    # fails, we fall back to neutral rather than a stale/wrong reading.
     reason = None
     try:
-        llm_result = llm_client.interpret_geopolitical_headlines(result["headlines"])
+        llm_result = llm_client.interpret_geopolitical_headlines(headlines)
         score = llm_result["score"]
         reason = llm_result["reason"]
         logger.info(f"Geopolitical (LLM): score {score} -- {reason}")
     except Exception as e:
-        # Graceful fallback: keep the naive Marketaux average rather than
-        # losing the gauge entirely if the LLM call fails for any reason.
-        logger.warning(f"LLM geopolitical interpretation failed, falling back to raw sentiment average: {e}")
+        logger.warning(f"LLM geopolitical interpretation failed, falling back to neutral: {e}")
 
-    db.save_geo_state(score, result["article_count"], result["headlines"], now, reason=reason)
-    logger.info(f"Geopolitical refresh: gauge {score} across {result['article_count']} articles")
-    return {**result, "gauge_score": score, "reason": reason}
+    db.save_geo_state(score, len(headlines), headlines, now, reason=reason)
+    logger.info(f"Geopolitical refresh: gauge {score} across {len(headlines)} articles")
+    return {"gauge_score": score, "article_count": len(headlines), "headlines": headlines, "reason": reason}
 
 
 def run_rate_tone_refresh() -> dict:
