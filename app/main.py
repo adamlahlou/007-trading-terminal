@@ -27,8 +27,9 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_calendar_refresh), "cron", hour="*/6", id="calendar_refresh")
     # Yields move slowly (UK series is monthly) -- once a day is plenty
     scheduler.add_job(lambda: asyncio.to_thread(run_yield_refresh), "cron", hour="6", id="yield_refresh")
-    # News moves faster -- every 3 hours, well within Marketaux's free 100/day
-    scheduler.add_job(lambda: asyncio.to_thread(run_news_refresh), "cron", hour="*/3", id="news_refresh")
+    # Hourly -- only 48 calls/day (2 per refresh), well within Marketaux's free
+    # 100/day, and now the only thing still using that quota since geo moved off it
+    scheduler.add_job(lambda: asyncio.to_thread(run_news_refresh), "cron", hour="*", id="news_refresh")
     # COT only updates weekly (Fridays) -- once a day easily catches it
     scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", hour="7", id="cot_refresh")
     # NFP/CPI only update monthly -- once a day easily catches it
