@@ -32,6 +32,11 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_news_refresh), "cron", hour="*", id="news_refresh")
     # COT only updates weekly (Fridays) -- once a day easily catches it
     scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", hour="7", id="cot_refresh")
+    # CFTC releases COT data every Friday at 3:30pm ET -- schedule a precise
+    # check shortly after, rather than waiting for the next daily 7am check.
+    # NOTE: 19:45 UTC assumes EDT (UTC-4, summer); during EST (UTC-5, winter)
+    # this would need to shift to 20:45 UTC -- not auto-adjusted for DST.
+    scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", day_of_week="fri", hour="19", minute="45", id="cot_refresh_friday")
     # NFP/CPI only update monthly -- once a day easily catches it
     scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
     # Geopolitical risk can move fast -- check more often than the GBP/USD news gauge
