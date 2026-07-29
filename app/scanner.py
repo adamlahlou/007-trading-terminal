@@ -163,14 +163,32 @@ def run_yield_refresh() -> dict:
 
 
 def run_news_refresh() -> dict:
-    result = marketaux_client.fetch_combined_sentiment()
+    headlines = freenews_client.fetch_gbp_usd_headlines()
+    gbp_headlines, usd_headlines = headlines["gbp"], headlines["usd"]
     now = datetime.now(timezone.utc).isoformat()
-    db.save_news_state(
-        result["gauge_score"], result["article_count"], result["headlines"], now,
-        gbp_score=result["gbp_score"], usd_score=result["usd_score"],
+
+    # Neutral fallback if the LLM call fails -- no naive sentiment average
+    # available from this source (unlike the old Marketaux path).
+    gbp_score, usd_score = 0.0, 0.0
+    gbp_reason, usd_reason = None, None
+    try:
+        gbp_result = llm_client.interpret_currency_headlines(gbp_headlines, "GBP")
+        gbp_score, gbp_reason = gbp_result["score"], gbp_result["reason"]
+        usd_result = llm_client.interpret_currency_headlines(usd_headlines, "USD")
+        usd_score, usd_reason = usd_result["score"], usd_result["reason"]
+    except Exception as e:
+        logger.warning(f"LLM currency tone interpretation failed, falling back to neutral: {e}")
+
+    gauge_score = round((gbp_score - usd_score) / 2, 4)
+    all_headlines = (
+        [{**h, "side": "GBP"} for h in gbp_headlines[:4]]
+        + [{**h, "side": "USD"} for h in usd_headlines[:4]]
     )
-    logger.info(f"News refresh: gauge {result['gauge_score']} (GBP {result['gbp_score']}, USD {result['usd_score']}) across {result['article_count']} articles")
-    return result
+    article_count = len(gbp_headlines) + len(usd_headlines)
+
+    db.save_news_state(gauge_score, article_count, all_headlines, now, gbp_score=gbp_score, usd_score=usd_score)
+    logger.info(f"News refresh: gauge {gauge_score} (GBP {gbp_score}: {gbp_reason} | USD {usd_score}: {usd_reason}) across {article_count} matched articles")
+    return {"gauge_score": gauge_score, "article_count": article_count, "headlines": all_headlines, "gbp_score": gbp_score, "usd_score": usd_score}
 
 
 def run_cot_refresh() -> dict:

@@ -502,12 +502,19 @@ async function loadNewsGauge() {
 
     const heads = d.headlines || [];
     if (heads.length) {
-      headlinesEl.innerHTML = heads.map(h => `
+      headlinesEl.innerHTML = heads.map(h => {
+        const hasSentiment = h.sentiment !== null && h.sentiment !== undefined;
+        const sentimentLabel = hasSentiment ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--';
+        const titleHtml = h.url
+          ? `<a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>`
+          : `<span>${h.title}${h.publisher ? ` <span class="dim-small">(${h.publisher})</span>` : ''}</span>`;
+        return `
         <div class="nh-row">
-          <span class="nh-sentiment" style="color:${sentimentColor(h.sentiment)}">${h.side ? `[${h.side}]` : ''} ${h.sentiment !== null ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--'}</span>
-          <a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>
+          <span class="nh-sentiment" style="color:${sentimentColor(hasSentiment ? h.sentiment : null)}">${h.side ? `[${h.side}]` : ''} ${sentimentLabel}</span>
+          ${titleHtml}
         </div>
-      `).join('');
+      `;
+      }).join('');
     } else {
       headlinesEl.innerHTML = '';
     }

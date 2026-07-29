@@ -69,3 +69,57 @@ def interpret_geopolitical_headlines(headlines: list[dict]) -> dict:
     score = max(-1.0, min(1.0, float(parsed["score"])))
     reason = str(parsed.get("reason", "")).strip()[:300]
     return {"score": round(score, 3), "reason": reason}
+
+
+CURRENCY_PROMPT_TEMPLATE = """You are judging the tone of recent {currency}-specific financial news headlines -- is the overall tone positive/strong or negative/weak for {currency}?
+
+Focus on genuine substance (strong/weak economic data, hawkish/dovish central bank language, political stability concerns) rather than just surface sentiment words.
+
+Headlines (most recent first):
+{headlines}
+
+Respond with ONLY a JSON object, no other text, in this exact form:
+{{"score": <float between -1.0 and 1.0, negative = weak/bad for {currency}, positive = strong/good for {currency}>, "reason": "<one short plain-English sentence explaining the read>"}}
+
+If there is genuinely nothing significant, return {{"score": 0.0, "reason": "No significant {currency}-specific developments detected."}}"""
+
+
+def interpret_currency_headlines(headlines: list[dict], currency: str) -> dict:
+    """headlines: list of {title, published_at, publisher}. currency: "GBP" or "USD".
+    Returns {score, reason}. Raises on failure -- caller should handle
+    gracefully same as any other gauge refresh."""
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+
+    if not headlines:
+        return {"score": 0.0, "reason": f"No significant {currency}-specific developments detected."}
+
+    headline_lines = "\n".join(f"- {h['title']}" for h in headlines if h.get("title"))
+    prompt = CURRENCY_PROMPT_TEMPLATE.format(currency=currency, headlines=headline_lines)
+
+    resp = requests.post(
+        API_URL,
+        headers={
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": MODEL,
+            "max_tokens": 200,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    text = data["content"][0]["text"].strip()
+
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise RuntimeError(f"Could not parse JSON from Claude's response: {text[:200]}")
+    parsed = json.loads(match.group(0))
+
+    score = max(-1.0, min(1.0, float(parsed["score"])))
+    reason = str(parsed.get("reason", "")).strip()[:300]
+    return {"score": round(score, 3), "reason": reason}
