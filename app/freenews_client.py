@@ -23,6 +23,7 @@ BASE_URL = "https://api.freenewsapi.io/v1/news"
 
 GBP_KEYWORDS = ["gbp", "pound", "sterling", "bank of england", " boe ", "uk economy", "britain", "british"]
 USD_KEYWORDS = ["usd", "dollar", "federal reserve", " fed ", "non-farm", "nonfarm", "nfp", "fomc", "us economy", "us inflation"]
+OTHER_DOLLAR_CURRENCIES = ["canadian dollar", "australian dollar", "new zealand dollar", "nz dollar", "singapore dollar", "hong kong dollar", "taiwan dollar"]
 
 
 def _fetch_headlines(topic: str, limit: int, lookback_hours: int) -> list[dict]:
@@ -79,9 +80,10 @@ def fetch_gbp_usd_headlines(lookback_hours: int = 48) -> dict:
     gbp_headlines, usd_headlines = [], []
     for a in unique_articles:
         title_lower = f" {a['title'].lower()} "
+        mentions_other_dollar = any(od in title_lower for od in OTHER_DOLLAR_CURRENCIES)
         if any(kw in title_lower for kw in GBP_KEYWORDS):
             gbp_headlines.append(a)
-        if any(kw in title_lower for kw in USD_KEYWORDS):
+        if any(kw in title_lower for kw in USD_KEYWORDS) and not mentions_other_dollar:
             usd_headlines.append(a)
 
     return {"gbp": gbp_headlines, "usd": usd_headlines}
