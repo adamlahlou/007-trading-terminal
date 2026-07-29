@@ -6,8 +6,11 @@ positive USD news should point OPPOSITE to positive GBP news for the pair.
 """
 from __future__ import annotations
 import os
+import logging
 import requests
 from datetime import datetime, timezone, timedelta
+
+logger = logging.getLogger("007-terminal")
 
 MARKETAUX_API_KEY = os.environ.get("MARKETAUX_API_KEY")
 BASE_URL = "https://api.marketaux.com/v1/news/all"
@@ -17,7 +20,7 @@ USD_QUERY = "Federal Reserve OR US dollar OR Non-Farm Payrolls OR US inflation O
 GEOPOLITICAL_QUERY = "war OR military conflict OR geopolitical tension OR sanctions OR invasion OR ceasefire OR global crisis OR safe haven demand"
 
 
-def _fetch_raw_sentiment(query: str, limit: int = 10, lookback_hours: int = 48) -> dict:
+def _fetch_raw_sentiment(query: str, limit: int = 10, lookback_hours: int = 168) -> dict:
     """Returns {score, article_count, headlines}. score is the average
     entity sentiment across fetched articles, -1..1, NOT yet GBPUSD-directional
     on its own -- see fetch_combined_sentiment for that.
@@ -26,7 +29,14 @@ def _fetch_raw_sentiment(query: str, limit: int = 10, lookback_hours: int = 48) 
     search can surface old articles that happen to match the search terms
     strongly, even when far more recent (but slightly differently worded)
     news exists. Discovered this in production: years-old headlines from
-    2021-2023 were outranking current news with no date bound in place."""
+    2021-2023 were outranking current news with no date bound in place.
+
+    lookback_hours defaults to 168 (7 days) rather than a tighter window --
+    a 48h window returned zero articles for GBP/USD in production, which is
+    implausible for this pair, so widened for safety while investigating
+    further. GBP/USD news moves fast enough that even week-old headlines
+    are still far more relevant than the multi-year-old ones this was
+    originally fixing."""
     if not MARKETAUX_API_KEY:
         raise RuntimeError("MARKETAUX_API_KEY is not set")
 
@@ -47,6 +57,8 @@ def _fetch_raw_sentiment(query: str, limit: int = 10, lookback_hours: int = 48) 
     resp.raise_for_status()
     data = resp.json()
     articles = data.get("data", [])
+    if not articles:
+        logger.warning(f"Marketaux returned 0 articles for query={query!r} published_after={published_after}")
 
     all_scores = []
     headlines = []
