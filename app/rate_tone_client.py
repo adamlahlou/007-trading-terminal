@@ -68,6 +68,21 @@ def fetch_statement_text(bank: str, d: date) -> str:
     resp = requests.get(url, headers={"User-Agent": "one-trading-terminal/1.0"}, timeout=20)
     resp.raise_for_status()
     text = _strip_html(resp.text)
+
+    # Fed pages have a lot of nav/boilerplate ("Official websites use .gov...
+    # Back to Home... Main Menu Toggle Button...") before the actual
+    # statement -- confirmed every real FOMC statement starts with this
+    # exact phrase, so anchor on it instead of blindly taking the first N
+    # characters (which was mostly nav junk, not the real content).
+    marker_idx = text.lower().find("for release at")
+    if marker_idx != -1:
+        text = text[marker_idx:]
+    else:
+        # Marker not found (e.g. BoE's page structure differs) -- nav/
+        # boilerplate is typically front-loaded on these gov sites, so
+        # keeping the LAST chunk is a safer bet than the first.
+        text = text[-6000:]
+
     # Statements are long (BoE minutes especially) -- the tone lives in the
     # opening summary, not deep in procedural detail, so cap it generously
     # but don't send the whole multi-thousand-word minutes document.
