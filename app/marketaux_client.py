@@ -7,6 +7,7 @@ positive USD news should point OPPOSITE to positive GBP news for the pair.
 from __future__ import annotations
 import os
 import requests
+from datetime import datetime, timezone, timedelta
 
 MARKETAUX_API_KEY = os.environ.get("MARKETAUX_API_KEY")
 BASE_URL = "https://api.marketaux.com/v1/news/all"
@@ -16,12 +17,20 @@ USD_QUERY = "Federal Reserve OR US dollar OR Non-Farm Payrolls OR US inflation O
 GEOPOLITICAL_QUERY = "war OR military conflict OR geopolitical tension OR sanctions OR invasion OR ceasefire OR global crisis OR safe haven demand"
 
 
-def _fetch_raw_sentiment(query: str, limit: int = 10) -> dict:
+def _fetch_raw_sentiment(query: str, limit: int = 10, lookback_hours: int = 48) -> dict:
     """Returns {score, article_count, headlines}. score is the average
     entity sentiment across fetched articles, -1..1, NOT yet GBPUSD-directional
-    on its own -- see fetch_combined_sentiment for that."""
+    on its own -- see fetch_combined_sentiment for that.
+
+    published_after is required here -- without it, Marketaux's relevance-first
+    search can surface old articles that happen to match the search terms
+    strongly, even when far more recent (but slightly differently worded)
+    news exists. Discovered this in production: years-old headlines from
+    2021-2023 were outranking current news with no date bound in place."""
     if not MARKETAUX_API_KEY:
         raise RuntimeError("MARKETAUX_API_KEY is not set")
+
+    published_after = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).strftime("%Y-%m-%dT%H:%M")
 
     resp = requests.get(
         BASE_URL,
@@ -31,6 +40,7 @@ def _fetch_raw_sentiment(query: str, limit: int = 10) -> dict:
             "language": "en",
             "limit": limit,
             "sort": "published_desc",
+            "published_after": published_after,
         },
         timeout=20,
     )
