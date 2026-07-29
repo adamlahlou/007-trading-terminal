@@ -12,8 +12,17 @@ function tick() {
 }
 setInterval(tick, 1000); tick();
 
+// OANDA labels a candle by when it OPENED, not when it closed -- a candle
+// timestamped 14:45 actually covers 14:45-15:00, so it doesn't really exist
+// until 15:00. Add the 15-min candle duration so displayed times reflect
+// when the brick actually completed, not when its underlying candle opened.
+function brickCompletionTime(formedAtIso) {
+  const t = new Date(formedAtIso.replace(/(\.\d+)?Z?$/, 'Z'));
+  return new Date(t.getTime() + 15 * 60 * 1000);
+}
+
 function timeAgo(isoString) {
-  const t = new Date(isoString.replace(/(\.\d+)?Z$/, 'Z')).getTime();
+  const t = brickCompletionTime(isoString).getTime();
   const diffMin = Math.floor((Date.now() - t) / 60000);
   if (diffMin < 1) return "just now";
   if (diffMin < 60) return `${diffMin}m ago`;
@@ -181,7 +190,7 @@ function drawBricks() {
     // the time, so an old brick sitting there for hours could easily be
     // misread as being from today.
     if (i === shown.length - 1) {
-      const t = new Date(b.formed_at.replace(/(\.\d+)?Z?$/, 'Z'));
+      const t = brickCompletionTime(b.formed_at);
       const datePart = t.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
       let timePart = t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
       timePart = timePart.replace(' ', '').toLowerCase(); // "11:30 AM" -> "11:30am"
@@ -480,7 +489,9 @@ async function loadNewsGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.score)) * 50;
     const verdict = gbpusdVerdict(d.score);
-    const breakdown = (d.gbp_score !== null && d.gbp_score !== undefined)
+    const hasGbpScore = d.gbp_score !== null && d.gbp_score !== undefined;
+    const hasUsdScore = d.usd_score !== null && d.usd_score !== undefined;
+    const breakdown = (hasGbpScore && hasUsdScore)
       ? ` (GBP news ${d.gbp_score > 0 ? '+' : ''}${d.gbp_score.toFixed(2)}, USD news ${d.usd_score > 0 ? '+' : ''}${d.usd_score.toFixed(2)})`
       : '';
 
@@ -493,12 +504,19 @@ async function loadNewsGauge() {
 
     const heads = d.headlines || [];
     if (heads.length) {
-      headlinesEl.innerHTML = heads.map(h => `
+      headlinesEl.innerHTML = heads.map(h => {
+        const hasSentiment = h.sentiment !== null && h.sentiment !== undefined;
+        const sentimentLabel = hasSentiment ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--';
+        const titleHtml = h.url
+          ? `<a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>`
+          : `<span>${h.title}${h.publisher ? ` <span class="dim-small">(${h.publisher})</span>` : ''}</span>`;
+        return `
         <div class="nh-row">
-          <span class="nh-sentiment" style="color:${sentimentColor(h.sentiment)}">${h.side ? `[${h.side}]` : ''} ${h.sentiment !== null ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--'}</span>
-          <a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>
+          <span class="nh-sentiment" style="color:${sentimentColor(hasSentiment ? h.sentiment : null)}">${h.side ? `[${h.side}]` : ''} ${sentimentLabel}</span>
+          ${titleHtml}
         </div>
-      `).join('');
+      `;
+      }).join('');
     } else {
       headlinesEl.innerHTML = '';
     }
@@ -617,12 +635,19 @@ async function loadGeoGauge() {
 
     const heads = d.headlines || [];
     if (heads.length && d.article_count >= 3) {
-      headlinesEl.innerHTML = heads.map(h => `
+      headlinesEl.innerHTML = heads.map(h => {
+        const hasSentiment = h.sentiment !== null && h.sentiment !== undefined;
+        const sentimentLabel = hasSentiment ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--';
+        const titleHtml = h.url
+          ? `<a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>`
+          : `<span>${h.title}${h.publisher ? ` <span class="dim-small">(${h.publisher})</span>` : ''}</span>`;
+        return `
         <div class="nh-row">
-          <span class="nh-sentiment" style="color:${sentimentColor(h.sentiment)}">${h.sentiment !== null ? (h.sentiment > 0 ? '+' : '') + h.sentiment.toFixed(2) : '--'}</span>
-          <a href="${h.url}" target="_blank" rel="noopener">${h.title}</a>
+          <span class="nh-sentiment" style="color:${sentimentColor(hasSentiment ? h.sentiment : null)}">${sentimentLabel}</span>
+          ${titleHtml}
         </div>
-      `).join('');
+      `;
+      }).join('');
     } else {
       headlinesEl.innerHTML = '';
     }
