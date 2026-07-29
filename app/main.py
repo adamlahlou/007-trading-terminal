@@ -269,7 +269,7 @@ async def api_rate_tone():
 @app.post("/api/rate-tone-refresh-now")
 async def rate_tone_refresh_now():
     try:
-        result = await asyncio.to_thread(run_rate_tone_refresh)
+        result = await asyncio.to_thread(run_rate_tone_refresh, True)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Rate tone refresh failed: {e}")
@@ -289,7 +289,7 @@ async def refresh_all():
         "cot": run_cot_refresh,
         "momentum": run_momentum_refresh,
         "geo": run_geo_refresh,
-        "rate_tone": run_rate_tone_refresh,
+        "rate_tone": lambda: run_rate_tone_refresh(force=True),
     }
 
     async def _run(name, fn):

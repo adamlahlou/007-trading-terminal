@@ -73,7 +73,12 @@ def interpret_geopolitical_headlines(headlines: list[dict]) -> dict:
 
 CURRENCY_PROMPT_TEMPLATE = """You are judging the tone of recent {currency}-specific financial news headlines -- is the overall tone positive/strong or negative/weak for {currency}?
 
-Focus on genuine substance (strong/weak economic data, hawkish/dovish central bank language, political stability concerns) rather than just surface sentiment words.
+Weigh these headlines by SUBSTANCE, not just by how recent or how strongly-worded each one is:
+- Highest weight: official data releases (GDP, inflation, employment), central bank statements/decisions, government policy actions
+- Medium weight: analyst commentary and forecasts that reference specific data or policy
+- Lowest weight: routine market commentary, opinion pieces, or vague "outlook" pieces with no new information
+
+A single low-substance headline (e.g. a generic weekly market preview) should NOT swing the score much even if it's the most recent one -- look for what's genuinely new and significant across the whole set, not just whatever's freshest.
 
 Headlines (most recent first):
 {headlines}

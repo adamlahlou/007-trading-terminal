@@ -179,7 +179,19 @@ def run_news_refresh() -> dict:
     except Exception as e:
         logger.warning(f"LLM currency tone interpretation failed, falling back to neutral: {e}")
 
-    gauge_score = round((gbp_score - usd_score) / 2, 4)
+    raw_gauge_score = round((gbp_score - usd_score) / 2, 4)
+
+    # Smooth against the previous reading (50/50 blend) -- an hourly refresh
+    # with a small, shifting headline sample was flickering between quite
+    # different readings hour to hour. This keeps it responsive to a
+    # genuine multi-hour shift in tone while damping single-refresh noise
+    # from whichever headlines happened to be in the window this time.
+    previous = db.get_news_state()
+    if previous and previous.get("score") is not None:
+        gauge_score = round(0.5 * raw_gauge_score + 0.5 * previous["score"], 4)
+    else:
+        gauge_score = raw_gauge_score
+
     all_headlines = (
         [{**h, "side": "GBP"} for h in gbp_headlines[:4]]
         + [{**h, "side": "USD"} for h in usd_headlines[:4]]
@@ -187,7 +199,7 @@ def run_news_refresh() -> dict:
     article_count = len(gbp_headlines) + len(usd_headlines)
 
     db.save_news_state(gauge_score, article_count, all_headlines, now, gbp_score=gbp_score, usd_score=usd_score)
-    logger.info(f"News refresh: gauge {gauge_score} (GBP {gbp_score}: {gbp_reason} | USD {usd_score}: {usd_reason}) across {article_count} matched articles")
+    logger.info(f"News refresh: gauge {gauge_score} (raw {raw_gauge_score}, GBP {gbp_score}: {gbp_reason} | USD {usd_score}: {usd_reason}) across {article_count} matched articles")
     return {"gauge_score": gauge_score, "article_count": article_count, "headlines": all_headlines, "gbp_score": gbp_score, "usd_score": usd_score}
 
 
@@ -235,13 +247,19 @@ def run_geo_refresh() -> dict:
     return {"gauge_score": score, "article_count": len(headlines), "headlines": headlines, "reason": reason}
 
 
-def run_rate_tone_refresh() -> dict:
+def run_rate_tone_refresh(force: bool = False) -> dict:
     """
     Checks for a FOMC/BoE decision in the last few days; if there's one we
     haven't processed yet, fetches the actual statement and has Claude judge
     hawkish/dovish tone. Dormant most of the time by design -- rate
     decisions are rare, so this just leaves the last known reading in place
     between meetings rather than needing constant refreshing.
+
+    force=True (used by the manual refresh-now endpoint) bypasses the
+    "already processed this meeting" dedup check -- needed so a manual
+    refresh can actually re-fetch and correct a bad prior read (e.g. after
+    fixing an extraction bug), rather than the dedup logic silently
+    preserving the old bad result forever.
     """
     today = datetime.now(timezone.utc).date()
     found = rate_tone_client.find_most_recent_decision(today)
@@ -250,7 +268,7 @@ def run_rate_tone_refresh() -> dict:
 
     bank, meeting_date = found
     existing = db.get_rate_tone_state()
-    if existing and existing["bank"] == bank and existing["meeting_date"] == meeting_date.isoformat():
+    if not force and existing and existing["bank"] == bank and existing["meeting_date"] == meeting_date.isoformat():
         return {"skipped": True, "reason": "already processed this meeting"}
 
     statement_text = rate_tone_client.fetch_statement_text(bank, meeting_date)
