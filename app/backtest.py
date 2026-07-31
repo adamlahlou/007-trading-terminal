@@ -203,15 +203,16 @@ def run_backtest(
             else:
                 # Reversal brick against an open position -- shouldn't
                 # normally happen since the stop-check above should have
-                # already caught it, but handle defensively. Exit at
-                # whichever price is MORE PROTECTIVE between the tracked
-                # stop level (which may already be at breakeven or the wide
-                # trail) and the reversal brick's raw open -- price would
-                # realistically have hit the tighter of the two first, so
-                # blindly using the reversal brick's geometry (a fixed 1-box
-                # distance) was giving back real protected profit on trades
-                # where the stop had already moved to breakeven or beyond.
-                exit_price = max(stop_price, b.open) if position == 1 else min(stop_price, b.open)
+                # already caught it, but handle defensively. Use the
+                # reversal brick's CLOSE (not its open) as the reference --
+                # a genuine Renko reversal requires a full 2-box move to
+                # even trigger, so the brick's open (only 1 box back) was
+                # understating how far price actually had to move against
+                # the position. Exit at whichever price is more protective
+                # between the tracked stop level (which may already be at
+                # breakeven or the wide trail) and that full 2-box point --
+                # price would realistically have hit the tighter of the two first.
+                exit_price = max(stop_price, b.close) if position == 1 else min(stop_price, b.close)
                 close_trade(exit_price, b.formed_at, "reversal_slip")
                 if gate_all_entries and not gauges_support(b.direction, b.formed_at):
                     continue  # exit taken, but don't flip into the new direction -- stay flat
