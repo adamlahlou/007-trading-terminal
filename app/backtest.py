@@ -203,11 +203,16 @@ def run_backtest(
             else:
                 # Reversal brick against an open position -- shouldn't
                 # normally happen since the stop-check above should have
-                # already caught it, but handle defensively: close at the
-                # brick's open (conservative) regardless of gauges (exiting
-                # the old, invalidated position is not gated), then only
-                # open the new direction if gate_all_entries permits it.
-                close_trade(b.open, b.formed_at, "reversal_slip")
+                # already caught it, but handle defensively. Exit at
+                # whichever price is MORE PROTECTIVE between the tracked
+                # stop level (which may already be at breakeven or the wide
+                # trail) and the reversal brick's raw open -- price would
+                # realistically have hit the tighter of the two first, so
+                # blindly using the reversal brick's geometry (a fixed 1-box
+                # distance) was giving back real protected profit on trades
+                # where the stop had already moved to breakeven or beyond.
+                exit_price = max(stop_price, b.open) if position == 1 else min(stop_price, b.open)
+                close_trade(exit_price, b.formed_at, "reversal_slip")
                 if gate_all_entries and not gauges_support(b.direction, b.formed_at):
                     continue  # exit taken, but don't flip into the new direction -- stay flat
                 position = b.direction
