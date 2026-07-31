@@ -43,7 +43,29 @@ function roundedRectPath(ctx, x, y, w, h, r) {
 
 // Shared state, updated independently by the bricks load (30min-ish) and
 // the live price poll (every 3s) -- drawBricks() is re-run after either changes.
-let state = { bricks: [], boxSize: 0.0022, livePrice: null, liveTradeEventsBySeq: {} };
+let state = { bricks: [], boxSize: 0.0022, livePrice: null, liveTradeEventsBySeq: {}, gaugeVerdicts: {} };
+
+// Aggregates every gauge's current verdict into one top-level macro read.
+// Called after each individual gauge finishes loading -- majority of
+// available bullish/bearish votes decides it; a tie (including "everything
+// neutral") reads as MIXED rather than picking a side arbitrarily.
+function updateMacroBadge() {
+  const badge = document.getElementById('macro-badge');
+  if (!badge) return;
+  const verdicts = Object.values(state.gaugeVerdicts);
+  if (!verdicts.length) { badge.textContent = ''; return; }
+
+  const bullish = verdicts.filter(v => v > 0.15).length;
+  const bearish = verdicts.filter(v => v < -0.15).length;
+
+  let text, color;
+  if (bullish > bearish) { text = 'BULLISH MACRO'; color = 'var(--white)'; }
+  else if (bearish > bullish) { text = 'BEARISH MACRO'; color = 'var(--blue)'; }
+  else { text = 'MIXED MACRO'; color = 'var(--amber)'; }
+
+  badge.textContent = text;
+  badge.style.color = color;
+}
 
 function drawBricks() {
   const { bricks, livePrice, boxSize } = state;
@@ -450,6 +472,8 @@ async function loadYields() {
     // spread is already in "positive = GBP favorable" terms, but the raw
     // magnitude (~0.1-0.3 typical) needs its own threshold, not the shared 0.15 default
     const verdict = gbpusdVerdict(clamped / GAUGE_CLAMP, 0.1);
+    state.gaugeVerdicts.yield = clamped / GAUGE_CLAMP;
+    updateMacroBadge();
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
@@ -489,7 +513,11 @@ async function loadNewsGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.score)) * 50;
     const verdict = gbpusdVerdict(d.score);
-    const breakdown = (d.gbp_score !== null && d.gbp_score !== undefined)
+    state.gaugeVerdicts.news = d.score;
+    updateMacroBadge();
+    const hasGbpScore = d.gbp_score !== null && d.gbp_score !== undefined;
+    const hasUsdScore = d.usd_score !== null && d.usd_score !== undefined;
+    const breakdown = (hasGbpScore && hasUsdScore)
       ? ` (GBP news ${d.gbp_score > 0 ? '+' : ''}${d.gbp_score.toFixed(2)}, USD news ${d.usd_score > 0 ? '+' : ''}${d.usd_score.toFixed(2)})`
       : '';
 
@@ -538,6 +566,8 @@ async function loadCotGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.1);
+    state.gaugeVerdicts.cot = d.gauge_score;
+    updateMacroBadge();
     const positioningNote = d.gauge_score > 0.1 ? 'Leveraged funds net long GBP'
       : (d.gauge_score < -0.1 ? 'Leveraged funds net short GBP' : 'Leveraged funds roughly flat');
 
@@ -580,6 +610,8 @@ async function loadMomentumGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score);
+    state.gaugeVerdicts.momentum = d.gauge_score;
+    updateMacroBadge();
     const dataNote = d.gauge_score > 0.15 ? 'Cooling US data'
       : (d.gauge_score < -0.15 ? 'Hot US data' : 'US data roughly in line');
 
@@ -618,6 +650,8 @@ async function loadGeoGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.15);
+    state.gaugeVerdicts.geo = d.gauge_score;
+    updateMacroBadge();
     const note = d.reason
       ? d.reason
       : (d.article_count < 3
@@ -669,6 +703,8 @@ async function loadRateToneGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.15);
+    state.gaugeVerdicts.rateTone = d.gauge_score;
+    updateMacroBadge();
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>

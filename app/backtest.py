@@ -30,7 +30,16 @@ from .gauge_history import GaugeHistory
 PIP = 0.0001
 INITIAL_STOP_PIPS = 52
 HOLD_BRICKS_BEFORE_TRAILING = 2  # don't move the stop at all until this many favorable bricks
-TRAIL_BOXES = 1.0                 # once trailing starts, trail this tight
+TRAIL_BOXES = 1.0                 # once trailing starts, trail this tight (the "tight" mode)
+
+# "breakeven_then_wide" mode: at exactly 2 favorable bricks, move the stop
+# to breakeven (not just start trailing) -- then trail 2 boxes (44 pips)
+# behind from there on, matching the fact that a genuine Renko reversal
+# itself requires a 2-box (44 pip) adverse move. Trailing tighter than that
+# (1 box/22 pips) doesn't meaningfully protect against anything a real
+# reversal wouldn't already trigger on its own.
+BREAKEVEN_AFTER_BRICKS = 2
+WIDE_TRAIL_BOXES = 2.0
 
 
 def _continuation_allowed(votes: dict, direction: int, mode: str) -> bool:
@@ -61,6 +70,7 @@ def run_backtest(
     require_reversal_to_reenter: bool = False,
     continuation_override: str | None = None,
     gate_all_entries: bool = False,
+    trailing_mode: str = "tight",
 ) -> dict:
     """
     require_reversal_to_reenter=False (default): enter on any new brick
@@ -83,6 +93,15 @@ def run_backtest(
     gauges agree with that direction. This applies universally, on top of
     whatever the require_reversal_to_reenter/continuation_override settings
     are doing -- it's the strictest of the three knobs.
+
+    trailing_mode: "tight" (default) holds the stop unmoved for 2 bricks,
+    then trails 1 box behind from there. "breakeven_then_wide" holds the
+    stop unmoved for 2 bricks, then moves it EXACTLY to breakeven at that
+    point, then trails 2 boxes (44 pips) behind from the 3rd favorable
+    brick onward -- deliberately matching the 44 pip move a genuine Renko
+    reversal itself requires, on the reasoning that trailing any tighter
+    than that isn't meaningfully protective against anything a real
+    reversal wouldn't already catch.
     """
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days)
@@ -161,14 +180,26 @@ def run_backtest(
                 favorable_bricks = 0
             elif b.direction == position:
                 favorable_bricks += 1
-                if favorable_bricks >= HOLD_BRICKS_BEFORE_TRAILING:
-                    trail_dist = TRAIL_BOXES * box_size
-                    candidate_stop = b.close - trail_dist if position == 1 else b.close + trail_dist
-                    if position == 1:
-                        stop_price = max(stop_price, candidate_stop)
-                    else:
-                        stop_price = min(stop_price, candidate_stop)
-                # else: still within the hold period -- stop stays put at its initial level
+                if trailing_mode == "breakeven_then_wide":
+                    if favorable_bricks == BREAKEVEN_AFTER_BRICKS:
+                        stop_price = entry_price  # exactly breakeven, not just "start trailing"
+                    elif favorable_bricks > BREAKEVEN_AFTER_BRICKS:
+                        trail_dist = WIDE_TRAIL_BOXES * box_size
+                        candidate_stop = b.close - trail_dist if position == 1 else b.close + trail_dist
+                        if position == 1:
+                            stop_price = max(stop_price, candidate_stop)
+                        else:
+                            stop_price = min(stop_price, candidate_stop)
+                    # else (favorable_bricks < 2): stop stays at its initial level, unmoved
+                else:  # "tight" mode (default)
+                    if favorable_bricks >= HOLD_BRICKS_BEFORE_TRAILING:
+                        trail_dist = TRAIL_BOXES * box_size
+                        candidate_stop = b.close - trail_dist if position == 1 else b.close + trail_dist
+                        if position == 1:
+                            stop_price = max(stop_price, candidate_stop)
+                        else:
+                            stop_price = min(stop_price, candidate_stop)
+                    # else: still within the hold period -- stop stays put at its initial level
             else:
                 # Reversal brick against an open position -- shouldn't
                 # normally happen since the stop-check above should have
@@ -189,10 +220,10 @@ def run_backtest(
         last_close = candles[-1]["close"]
         close_trade(last_close, candles[-1]["time"], "end_of_window")
 
-    return _summarize(trades, days, require_reversal_to_reenter, continuation_override, gate_all_entries)
+    return _summarize(trades, days, require_reversal_to_reenter, continuation_override, gate_all_entries, trailing_mode)
 
 
-def _summarize(trades: list[dict], days: int, require_reversal_to_reenter: bool, continuation_override: str | None, gate_all_entries: bool = False) -> dict:
+def _summarize(trades: list[dict], days: int, require_reversal_to_reenter: bool, continuation_override: str | None, gate_all_entries: bool = False, trailing_mode: str = "tight") -> dict:
     if gate_all_entries:
         mode = "gate_all_entries_2of3"
     elif require_reversal_to_reenter and continuation_override:
@@ -201,6 +232,7 @@ def _summarize(trades: list[dict], days: int, require_reversal_to_reenter: bool,
         mode = "reversal_only_reentry"
     else:
         mode = "any_brick_reentry"
+    mode = f"{mode}__trail_{trailing_mode}"
 
     if not trades:
         return {"days": days, "mode": mode, "total_trades": 0, "message": "No trades triggered in this window"}

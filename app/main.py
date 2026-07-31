@@ -307,7 +307,7 @@ async def refresh_all():
 
 
 @app.get("/api/backtest")
-async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False):
+async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight"):
     """On-demand only -- not scheduled. Fetches historical OANDA data and
     simulates the Renko trade rules against it. Runs in a thread since it
     does real (slow-ish) API calls and computation.
@@ -317,9 +317,12 @@ async def api_backtest(days: int = 45, reversal_only: bool = False, continuation
     reversal_only=true) allows a same-direction re-entry anyway if the
     reconstructed yield/COT/momentum gauges support it at that point in time.
     gate_all_entries=true requires 2+/3 gauge agreement for EVERY entry,
-    including genuine reversal bricks -- the strictest of the three modes."""
+    including genuine reversal bricks -- the strictest of the three modes.
+    trailing_mode=tight|breakeven_then_wide -- tight (default) holds 2
+    bricks then trails 1 box; breakeven_then_wide holds 2 bricks, moves to
+    exact breakeven, then trails 2 boxes (44 pips) from there on."""
     try:
-        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries)
+        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
