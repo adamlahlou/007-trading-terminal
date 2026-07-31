@@ -41,17 +41,28 @@ TRAIL_BOXES = 1.0                 # once trailing starts, trail this tight (the 
 BREAKEVEN_AFTER_BRICKS = 2
 WIDE_TRAIL_BOXES = 2.0
 
+# "simple_22_33" mode: trail 1 box (22 pips) from the very start, no hold
+# period -- then widen to 1.5 boxes (33 pips) once the position has reached
+# 2 boxes (44 pips) of profit, giving a winning trade a bit more room once
+# it's proven itself, without the "hold completely still" period the other
+# modes use.
+SIMPLE_TRAIL_BOXES = 1.0
+SIMPLE_WIDEN_AFTER_PIPS = 44.0
+SIMPLE_WIDENED_TRAIL_BOXES = 1.5
 
-def _continuation_allowed(votes: dict, direction: int, mode: str) -> bool:
+
+def _continuation_allowed(votes: dict, direction: int, mode: str, threshold: int = 2) -> bool:
     """votes: {gauge_name: -1/0/1}. direction: 1 (long) or -1 (short) --
-    the direction we'd be continuing in. Returns whether the gauges
-    support allowing a same-direction re-entry instead of requiring a
-    genuine reversal."""
+    the direction we'd be continuing in. threshold: how many gauges need
+    to agree (1 or 2, out of the 3 -- yield/COT/momentum, never
+    geopolitical, which was never part of this validated set). Returns
+    whether the gauges support allowing a same-direction re-entry instead
+    of requiring a genuine reversal."""
     if not votes:
         return False
     if mode == "majority":
         matching = sum(1 for v in votes.values() if v == direction)
-        return matching >= 2
+        return matching >= threshold
     if mode == "momentum_weighted":
         score = 0
         for name, v in votes.items():
@@ -60,7 +71,7 @@ def _continuation_allowed(votes: dict, direction: int, mode: str) -> bool:
                 score += weight
             elif v == -direction:
                 score -= weight
-        return score >= 2
+        return score >= threshold
     return False
 
 
@@ -71,6 +82,7 @@ def run_backtest(
     continuation_override: str | None = None,
     gate_all_entries: bool = False,
     trailing_mode: str = "tight",
+    gate_threshold: int = 2,
 ) -> dict:
     """
     require_reversal_to_reenter=False (default): enter on any new brick
@@ -145,7 +157,7 @@ def run_backtest(
         if gauge_hist is None:
             return True
         votes = gauge_hist.votes_as_of(at_time)
-        return _continuation_allowed(votes, direction, "majority")
+        return _continuation_allowed(votes, direction, "majority", gate_threshold)
 
     for candle in candles:
         # 1) Check if the currently open position would have been stopped
@@ -168,7 +180,7 @@ def run_backtest(
                 )
                 if blocked and gauge_hist is not None and not gate_all_entries:
                     votes = gauge_hist.votes_as_of(candle["time"])
-                    if _continuation_allowed(votes, b.direction, continuation_override):
+                    if _continuation_allowed(votes, b.direction, continuation_override, gate_threshold):
                         blocked = False  # gauges support the continuation -- allow it anyway
                 if blocked:
                     continue  # same-direction continuation after a close -- wait for a genuine reversal instead
@@ -191,6 +203,17 @@ def run_backtest(
                         else:
                             stop_price = min(stop_price, candidate_stop)
                     # else (favorable_bricks < 2): stop stays at its initial level, unmoved
+                elif trailing_mode == "simple_22_33":
+                    # No hold period -- trail from the very first favorable
+                    # brick. Widen the trail distance once genuinely in profit.
+                    profit_pips = ((b.close - entry_price) if position == 1 else (entry_price - b.close)) / PIP
+                    trail_boxes = SIMPLE_WIDENED_TRAIL_BOXES if profit_pips >= SIMPLE_WIDEN_AFTER_PIPS else SIMPLE_TRAIL_BOXES
+                    trail_dist = trail_boxes * box_size
+                    candidate_stop = b.close - trail_dist if position == 1 else b.close + trail_dist
+                    if position == 1:
+                        stop_price = max(stop_price, candidate_stop)
+                    else:
+                        stop_price = min(stop_price, candidate_stop)
                 else:  # "tight" mode (default)
                     if favorable_bricks >= HOLD_BRICKS_BEFORE_TRAILING:
                         trail_dist = TRAIL_BOXES * box_size
@@ -226,14 +249,14 @@ def run_backtest(
         last_close = candles[-1]["close"]
         close_trade(last_close, candles[-1]["time"], "end_of_window")
 
-    return _summarize(trades, days, require_reversal_to_reenter, continuation_override, gate_all_entries, trailing_mode)
+    return _summarize(trades, days, require_reversal_to_reenter, continuation_override, gate_all_entries, trailing_mode, gate_threshold)
 
 
-def _summarize(trades: list[dict], days: int, require_reversal_to_reenter: bool, continuation_override: str | None, gate_all_entries: bool = False, trailing_mode: str = "tight") -> dict:
+def _summarize(trades: list[dict], days: int, require_reversal_to_reenter: bool, continuation_override: str | None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2) -> dict:
     if gate_all_entries:
-        mode = "gate_all_entries_2of3"
+        mode = f"gate_all_entries_{gate_threshold}of3"
     elif require_reversal_to_reenter and continuation_override:
-        mode = f"reversal_only_with_{continuation_override}_override"
+        mode = f"reversal_only_with_{continuation_override}_override_{gate_threshold}of3"
     elif require_reversal_to_reenter:
         mode = "reversal_only_reentry"
     else:

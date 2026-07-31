@@ -307,7 +307,7 @@ async def refresh_all():
 
 
 @app.get("/api/backtest")
-async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight"):
+async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2):
     """On-demand only -- not scheduled. Fetches historical OANDA data and
     simulates the Renko trade rules against it. Runs in a thread since it
     does real (slow-ish) API calls and computation.
@@ -316,13 +316,19 @@ async def api_backtest(days: int = 45, reversal_only: bool = False, continuation
     continuation_override=majority|momentum_weighted (only meaningful with
     reversal_only=true) allows a same-direction re-entry anyway if the
     reconstructed yield/COT/momentum gauges support it at that point in time.
-    gate_all_entries=true requires 2+/3 gauge agreement for EVERY entry,
-    including genuine reversal bricks -- the strictest of the three modes.
-    trailing_mode=tight|breakeven_then_wide -- tight (default) holds 2
-    bricks then trails 1 box; breakeven_then_wide holds 2 bricks, moves to
-    exact breakeven, then trails 2 boxes (44 pips) from there on."""
+    gate_all_entries=true requires gate_threshold+/3 gauge agreement for
+    EVERY entry, including genuine reversal bricks -- the strictest mode.
+    gate_threshold=1|2 -- how many of the 3 proven gauges (yield/COT/
+    momentum, never geopolitical) must agree, for both gate_all_entries and
+    continuation_override=majority. Defaults to 2.
+    trailing_mode=tight|breakeven_then_wide|simple_22_33 -- tight (default)
+    holds 2 bricks then trails 1 box; breakeven_then_wide holds 2 bricks,
+    moves to exact breakeven, then trails 2 boxes (44 pips) from there on;
+    simple_22_33 trails 1 box (22 pips) from the very first favorable
+    brick with no hold period, widening to 1.5 boxes (33 pips) once 44+
+    pips profit is reached."""
     try:
-        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode)
+        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
