@@ -160,7 +160,12 @@ def run_backtest(
         while sample_date <= now:
             iso = sample_date.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
             votes = gauge_hist.votes_as_of(iso)
-            gauge_samples.append({"date": sample_date.date().isoformat(), "votes": votes})
+            raw_scores = {
+                "yield": gauge_hist.yield_score(iso),
+                "cot": gauge_hist.cot_score(iso),
+                "momentum": gauge_hist.momentum_score(iso),
+            }
+            gauge_samples.append({"date": sample_date.date().isoformat(), "votes": votes, "raw_scores": raw_scores})
             sample_date += timedelta(days=3)
 
     state = RenkoState(box_size=box_size)
