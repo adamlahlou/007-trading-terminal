@@ -41,6 +41,16 @@ TRAIL_BOXES = 1.0                 # once trailing starts, trail this tight (the 
 BREAKEVEN_AFTER_BRICKS = 2
 WIDE_TRAIL_BOXES = 2.0
 
+# "gradual_lock" mode: same as breakeven_then_wide, but adds an earlier
+# stage -- after just 1 favorable brick (not yet the full 2 needed for
+# breakeven), lock in a small amount of real profit instead of leaving the
+# trade completely unprotected until the 2-brick threshold. The stop only
+# ever ratchets forward (via max/min), so this early lock is never undone
+# once the 2-brick breakeven/wide-trail stage takes over -- it just gets
+# superseded once that's actually better.
+EARLY_LOCK_AFTER_BRICKS = 1
+EARLY_LOCK_PIPS = 5.0
+
 # "simple_22_33" mode: trail 1 box (22 pips) from the very start, no hold
 # period -- then widen to 1.5 boxes (33 pips) once the position has reached
 # 2 boxes (44 pips) of profit, giving a winning trade a bit more room once
@@ -203,6 +213,18 @@ def run_backtest(
                         else:
                             stop_price = min(stop_price, candidate_stop)
                     # else (favorable_bricks < 2): stop stays at its initial level, unmoved
+                elif trailing_mode == "gradual_lock":
+                    if favorable_bricks >= BREAKEVEN_AFTER_BRICKS:
+                        trail_dist = WIDE_TRAIL_BOXES * box_size
+                        candidate_stop = b.close - trail_dist if position == 1 else b.close + trail_dist
+                    else:  # exactly at the early-lock stage (1 favorable brick)
+                        lock_dist = EARLY_LOCK_PIPS * PIP
+                        candidate_stop = entry_price + lock_dist if position == 1 else entry_price - lock_dist
+                    # stop only ever ratchets forward -- never regresses
+                    if position == 1:
+                        stop_price = max(stop_price, candidate_stop)
+                    else:
+                        stop_price = min(stop_price, candidate_stop)
                 elif trailing_mode == "simple_22_33":
                     # No hold period -- trail from the very first favorable
                     # brick. Widen the trail distance once genuinely in profit.

@@ -321,12 +321,15 @@ async def api_backtest(days: int = 45, reversal_only: bool = False, continuation
     gate_threshold=1|2 -- how many of the 3 proven gauges (yield/COT/
     momentum, never geopolitical) must agree, for both gate_all_entries and
     continuation_override=majority. Defaults to 2.
-    trailing_mode=tight|breakeven_then_wide|simple_22_33 -- tight (default)
-    holds 2 bricks then trails 1 box; breakeven_then_wide holds 2 bricks,
-    moves to exact breakeven, then trails 2 boxes (44 pips) from there on;
-    simple_22_33 trails 1 box (22 pips) from the very first favorable
-    brick with no hold period, widening to 1.5 boxes (33 pips) once 44+
-    pips profit is reached."""
+    trailing_mode=tight|breakeven_then_wide|gradual_lock|simple_22_33 --
+    tight (default) holds 2 bricks then trails 1 box; breakeven_then_wide
+    holds 2 bricks, moves to exact breakeven, then trails 2 boxes (44
+    pips) from there on; gradual_lock is breakeven_then_wide but adds an
+    earlier stage -- locks in 5 pips of real profit after just 1
+    favorable brick, instead of leaving the trade fully unprotected until
+    the 2-brick threshold; simple_22_33 trails 1 box (22 pips) from the
+    very first favorable brick with no hold period, widening to 1.5
+    boxes (33 pips) once 44+ pips profit is reached."""
     try:
         result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold)
         return JSONResponse(result)
