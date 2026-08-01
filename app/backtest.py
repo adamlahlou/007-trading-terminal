@@ -61,6 +61,16 @@ SIMPLE_WIDEN_AFTER_PIPS = 44.0
 SIMPLE_WIDENED_TRAIL_BOXES = 1.5
 
 
+def _get_votes(gauge_hist, at_time: str, gauge_set: str) -> dict:
+    """gauge_set='yield_cot_momentum' (default, the originally validated
+    set) or 'momentum_rate_tone' -- momentum + real historical rate-tone
+    reconstruction instead of yield/COT."""
+    if gauge_set == "momentum_rate_tone":
+        votes = gauge_hist.votes_as_of(at_time, include_rate_tone=True)
+        return {k: v for k, v in votes.items() if k in ("momentum", "rate_tone")}
+    return gauge_hist.votes_as_of(at_time)
+
+
 def _continuation_allowed(votes: dict, direction: int, mode: str, threshold: int = 2) -> bool:
     """votes: {gauge_name: -1/0/1}. direction: 1 (long) or -1 (short) --
     the direction we'd be continuing in. threshold: how many gauges need
@@ -96,6 +106,7 @@ def run_backtest(
     start_date: str | None = None,
     end_date: str | None = None,
     debug_gauges: bool = False,
+    gauge_set: str = "yield_cot_momentum",
 ) -> dict:
     """
     start_date/end_date (YYYY-MM-DD): test a SPECIFIC historical window
@@ -159,11 +170,12 @@ def run_backtest(
         sample_date = start
         while sample_date <= now:
             iso = sample_date.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
-            votes = gauge_hist.votes_as_of(iso)
+            votes = _get_votes(gauge_hist, iso, gauge_set)
             raw_scores = {
                 "yield": gauge_hist.yield_score(iso),
                 "cot": gauge_hist.cot_score(iso),
                 "momentum": gauge_hist.momentum_score(iso),
+                "rate_tone": gauge_hist.rate_tone_score(iso),
             }
             gauge_samples.append({"date": sample_date.date().isoformat(), "votes": votes, "raw_scores": raw_scores})
             sample_date += timedelta(days=3)
@@ -198,7 +210,7 @@ def run_backtest(
     def gauges_support(direction, at_time):
         if gauge_hist is None:
             return True
-        votes = gauge_hist.votes_as_of(at_time)
+        votes = _get_votes(gauge_hist, at_time, gauge_set)
         return _continuation_allowed(votes, direction, "majority", gate_threshold)
 
     for candle in candles:
@@ -221,7 +233,7 @@ def run_backtest(
                     and b.direction == last_closed_direction
                 )
                 if blocked and gauge_hist is not None and not gate_all_entries:
-                    votes = gauge_hist.votes_as_of(candle["time"])
+                    votes = _get_votes(gauge_hist, candle["time"], gauge_set)
                     if _continuation_allowed(votes, b.direction, continuation_override, gate_threshold):
                         blocked = False  # gauges support the continuation -- allow it anyway
                 if blocked:
@@ -317,6 +329,7 @@ def run_backtest(
 
     result = _summarize(trades, days, require_reversal_to_reenter, continuation_override, gate_all_entries, trailing_mode, gate_threshold)
     result["window"] = f"{start.date().isoformat()} to {now.date().isoformat()}"
+    result["gauge_set"] = gauge_set
     if gauge_samples is not None:
         result["gauge_samples"] = gauge_samples
     return result

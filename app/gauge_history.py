@@ -1,9 +1,11 @@
 """
-Reconstructs what the yield, COT, and momentum gauges actually said at any
-point in a historical window -- for backtesting the "allow continuation
-re-entry if gauges agree" rule. Deliberately only uses the 3 gauges with
-genuine historical time series (FRED, CFTC) -- news/geo/rate-tone would need
-re-running LLM interpretation against archived data, a bigger separate task.
+Reconstructs what the yield, COT, momentum, and (optionally) rate-tone
+gauges actually said at any point in a historical window -- for
+backtesting entry rules that gate on real historical fundamentals rather
+than today's live snapshot. Geopolitical/news are deliberately excluded --
+those need re-running LLM interpretation against many archived headlines
+per day, a much bigger separate task than rate-tone (which only needs one
+real fetch+interpretation per actual meeting, cached).
 
 Critical correctness rule throughout: every lookup only considers data
 dated ON OR BEFORE the target date. Using a later observation would be
@@ -11,8 +13,9 @@ lookahead bias -- silently "cheating" by letting the backtest know things
 it couldn't have known yet, which would make the results meaningless.
 """
 from __future__ import annotations
-from datetime import date, timedelta
-from . import fred_client, cot_client
+from datetime import date, timedelta, datetime
+from . import fred_client, cot_client, rate_tone_client
+from .calendar_schedule import FOMC_DATES_2026, BOE_MPC_DATES_2026
 
 
 def _value_as_of(series: list[tuple[float, str]], target_date: str) -> float | None:
@@ -48,6 +51,45 @@ class GaugeHistory:
         self.nfp_series = momentum["nfp"]
 
         self.cot_series = cot_client.fetch_cot_history(cot_start, end)
+
+        # Rate tone: NOT eagerly fetched (unlike the others) -- each real
+        # meeting needs a slow real fetch + LLM call, so we only do that
+        # once per actual meeting, lazily, cached by (bank, date).
+        self._all_decisions = sorted(
+            [("Fed", d) for d, _ in FOMC_DATES_2026] + [("BoE", d) for d, _ in BOE_MPC_DATES_2026],
+            key=lambda x: x[1],
+        )
+        self._rate_tone_cache: dict[tuple[str, date], float | None] = {}
+
+    def rate_tone_score(self, target_date: str) -> float | None:
+        """Finds the most recent FOMC/BoE meeting on or before target_date,
+        fetches the REAL historical statement for it (only once -- cached
+        after that), and returns its GBPUSD-directional score. Returns
+        None if no meeting has happened yet at this point in the window."""
+        target = datetime.strptime(target_date[:10], "%Y-%m-%d").date()
+        most_recent = None
+        for bank, meeting_date in self._all_decisions:
+            if meeting_date <= target:
+                most_recent = (bank, meeting_date)
+            else:
+                break
+        if most_recent is None:
+            return None
+
+        if most_recent in self._rate_tone_cache:
+            return self._rate_tone_cache[most_recent]
+
+        bank, meeting_date = most_recent
+        try:
+            statement_text = rate_tone_client.fetch_statement_text(bank, meeting_date)
+            result = rate_tone_client.interpret_rate_statement(bank, statement_text)
+            # Fed hawkish -> USD strength -> GBPUSD bearish (inverted).
+            # BoE hawkish -> GBP strength -> GBPUSD bullish (direct).
+            score = -result["score"] if bank == "Fed" else result["score"]
+        except Exception:
+            score = None  # a fetch/parse failure shouldn't crash the whole backtest
+        self._rate_tone_cache[most_recent] = score
+        return score
 
     def yield_score(self, target_date: str) -> float | None:
         us = _value_as_of(self.us_yield_series, target_date)
@@ -99,9 +141,11 @@ class GaugeHistory:
         hot_data_score = (norm_nfp + norm_cpi) / 2
         return -hot_data_score  # same inversion as the live gauge
 
-    def votes_as_of(self, target_date: str, threshold: float = 0.1) -> dict:
-        """Returns {gauge_name: -1/0/1} for whichever of the 3 gauges have
-        data available yet at this point in the window."""
+    def votes_as_of(self, target_date: str, threshold: float = 0.1, include_rate_tone: bool = False) -> dict:
+        """Returns {gauge_name: -1/0/1} for whichever gauges have data
+        available yet at this point in the window. include_rate_tone=True
+        adds rate_tone to the set (default False preserves the original
+        yield/COT/momentum-only gate exactly as validated)."""
         votes = {}
         y, c, m = self.yield_score(target_date), self.cot_score(target_date), self.momentum_score(target_date)
         for name, score in (("yield", y), ("cot", c), ("momentum", m)):
@@ -113,4 +157,8 @@ class GaugeHistory:
                 votes[name] = -1
             else:
                 votes[name] = 0
+        if include_rate_tone:
+            rt = self.rate_tone_score(target_date)
+            if rt is not None:
+                votes["rate_tone"] = 1 if rt > threshold else (-1 if rt < -threshold else 0)
         return votes

@@ -307,7 +307,7 @@ async def refresh_all():
 
 
 @app.get("/api/backtest")
-async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None, debug_gauges: bool = False):
+async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None, debug_gauges: bool = False, gauge_set: str = "yield_cot_momentum"):
     """On-demand only -- not scheduled. Fetches historical OANDA data and
     simulates the Renko trade rules against it. Runs in a thread since it
     does real (slow-ish) API calls and computation.
@@ -333,9 +333,13 @@ async def api_backtest(days: int = 45, reversal_only: bool = False, continuation
     favorable brick, instead of leaving the trade fully unprotected until
     the 2-brick threshold; simple_22_33 trails 1 box (22 pips) from the
     very first favorable brick with no hold period, widening to 1.5
-    boxes (33 pips) once 44+ pips profit is reached."""
+    boxes (33 pips) once 44+ pips profit is reached.
+    gauge_set=yield_cot_momentum (default, the originally validated set)
+    or momentum_rate_tone -- momentum + REAL historical rate-tone
+    reconstruction (actual FOMC/BoE statement text, real LLM
+    interpretation, cached per meeting) instead of yield/COT."""
     try:
-        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges)
+        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges, gauge_set)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
