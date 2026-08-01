@@ -148,6 +148,7 @@ class GaugeHistory:
             headlines = freenews_client.fetch_gbp_usd_headlines_range(published_after, published_before)
             self._news_article_counts[bucket_start] = {
                 "gbp": len(headlines["gbp"]), "usd": len(headlines["usd"]),
+                "total_fetched": headlines.get("total_fetched"),
             }
             gbp_result = llm_client.interpret_currency_headlines(headlines["gbp"], "GBP")
             usd_result = llm_client.interpret_currency_headlines(headlines["usd"], "USD")

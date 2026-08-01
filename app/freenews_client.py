@@ -80,7 +80,7 @@ def _classify_gbp_usd(articles: list[dict]) -> dict:
         if any(kw in title_lower for kw in USD_KEYWORDS) and not mentions_other_dollar:
             usd_headlines.append(a)
 
-    return {"gbp": gbp_headlines, "usd": usd_headlines}
+    return {"gbp": gbp_headlines, "usd": usd_headlines, "total_fetched": len(unique_articles)}
 
 
 def fetch_geopolitical_headlines(limit: int = 15, lookback_hours: int = 24) -> list[dict]:
@@ -90,13 +90,19 @@ def fetch_geopolitical_headlines(limit: int = 15, lookback_hours: int = 24) -> l
     return _fetch_headlines("world", limit, lookback_hours)
 
 
+NEWS_TOPICS = ("finance", "business", "economy", "politics", "world")
+
+
 def fetch_gbp_usd_headlines(lookback_hours: int = 48) -> dict:
     """Returns {gbp: [headlines], usd: [headlines]} -- fetches recent
-    finance/business/economy articles, then classifies each headline
-    ourselves via simple keyword matching (not a vendor search-string
-    query) so there's no ambiguity about how the classification works."""
+    finance/business/economy/politics/world articles, then classifies each
+    headline ourselves via simple keyword matching (not a vendor
+    search-string query) so there's no ambiguity about how the
+    classification works. politics/world added after finding
+    finance/business/economy alone matched almost nothing historically --
+    real central bank/currency-moving news often gets tagged there instead."""
     all_articles = []
-    for topic in ("finance", "business", "economy"):
+    for topic in NEWS_TOPICS:
         all_articles.extend(_fetch_headlines(topic, limit=25, lookback_hours=lookback_hours))
     return _classify_gbp_usd(all_articles)
 
@@ -110,6 +116,6 @@ def fetch_geopolitical_headlines_range(published_after: str, published_before: s
 def fetch_gbp_usd_headlines_range(published_after: str, published_before: str) -> dict:
     """Historical version of fetch_gbp_usd_headlines -- explicit date range."""
     all_articles = []
-    for topic in ("finance", "business", "economy"):
+    for topic in NEWS_TOPICS:
         all_articles.extend(_fetch_headlines_range(topic, limit=25, published_after=published_after, published_before=published_before))
     return _classify_gbp_usd(all_articles)
