@@ -93,8 +93,16 @@ def run_backtest(
     gate_all_entries: bool = False,
     trailing_mode: str = "tight",
     gate_threshold: int = 2,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict:
     """
+    start_date/end_date (YYYY-MM-DD): test a SPECIFIC historical window
+    instead of the default rolling "last `days` days from now" -- e.g. a
+    particular month, so results from different periods can be compared
+    or added together rather than always looking at the same recent stretch.
+    When both are given, they override `days` entirely.
+
     require_reversal_to_reenter=False (default): enter on any new brick
     while flat, same direction or not -- matches "enter on every brick".
 
@@ -125,8 +133,13 @@ def run_backtest(
     than that isn't meaningfully protective against anything a real
     reversal wouldn't already catch.
     """
-    now = datetime.now(timezone.utc)
-    start = now - timedelta(days=days)
+    if start_date and end_date:
+        start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        now = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        days = (now - start).days  # for the results summary, so it reflects the real span
+    else:
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=days)
 
     candles = oanda_client.fetch_candles(since=start, until=now, granularity="M15")
     if not candles:
@@ -283,7 +296,9 @@ def run_backtest(
         last_close = candles[-1]["close"]
         close_trade(last_close, candles[-1]["time"], "end_of_window")
 
-    return _summarize(trades, days, require_reversal_to_reenter, continuation_override, gate_all_entries, trailing_mode, gate_threshold)
+    result = _summarize(trades, days, require_reversal_to_reenter, continuation_override, gate_all_entries, trailing_mode, gate_threshold)
+    result["window"] = f"{start.date().isoformat()} to {now.date().isoformat()}"
+    return result
 
 
 def _summarize(trades: list[dict], days: int, require_reversal_to_reenter: bool, continuation_override: str | None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2) -> dict:

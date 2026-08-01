@@ -307,10 +307,14 @@ async def refresh_all():
 
 
 @app.get("/api/backtest")
-async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2):
+async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None):
     """On-demand only -- not scheduled. Fetches historical OANDA data and
     simulates the Renko trade rules against it. Runs in a thread since it
     does real (slow-ish) API calls and computation.
+    start_date/end_date (YYYY-MM-DD): test a SPECIFIC historical window
+    (e.g. a particular month) instead of the default rolling "last `days`
+    days from now" -- lets results from different periods be compared or
+    added together. Overrides `days` when both are given.
     reversal_only=true tests the variant that only re-enters on a genuine
     reversal brick, rather than any same-direction continuation brick.
     continuation_override=majority|momentum_weighted (only meaningful with
@@ -331,7 +335,7 @@ async def api_backtest(days: int = 45, reversal_only: bool = False, continuation
     very first favorable brick with no hold period, widening to 1.5
     boxes (33 pips) once 44+ pips profit is reached."""
     try:
-        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold)
+        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
