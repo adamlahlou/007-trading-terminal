@@ -185,6 +185,8 @@ def run_backtest(
             if gauge_set == "news_geo_rate_tone":
                 raw_scores["geo"] = gauge_hist.geopolitical_score(iso)
                 raw_scores["news"] = gauge_hist.news_score(iso)
+                raw_scores["geo_article_count"] = gauge_hist.geo_article_count(iso)
+                raw_scores["news_article_counts"] = gauge_hist.news_article_counts(iso)
             gauge_samples.append({"date": sample_date.date().isoformat(), "votes": votes, "raw_scores": raw_scores})
             sample_date += timedelta(days=3)
 

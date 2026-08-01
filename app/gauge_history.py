@@ -67,6 +67,8 @@ class GaugeHistory:
         self._history_start = start_date
         self._geo_cache: dict[date, float | None] = {}
         self._news_cache: dict[date, float | None] = {}
+        self._geo_article_counts: dict[date, int] = {}
+        self._news_article_counts: dict[date, dict] = {}
 
     def rate_tone_score(self, target_date: str) -> float | None:
         """Finds the most recent FOMC/BoE meeting on or before target_date,
@@ -117,12 +119,20 @@ class GaugeHistory:
             published_after = bucket_start.strftime("%Y-%m-%dT00:00:00Z")
             published_before = bucket_end.strftime("%Y-%m-%dT00:00:00Z")
             headlines = freenews_client.fetch_geopolitical_headlines_range(published_after, published_before)
+            self._geo_article_counts[bucket_start] = len(headlines)
             result = llm_client.interpret_geopolitical_headlines(headlines)
             score = result["score"]
         except Exception:
             score = None  # a fetch/parse failure shouldn't crash the whole backtest
         self._geo_cache[bucket_start] = score
         return score
+
+    def geo_article_count(self, target_date: str) -> int | None:
+        """Diagnostic: how many raw articles were actually fetched for this
+        week (before any GBP/USD classification) -- distinguishes 'no
+        articles found at all' from 'articles found but none relevant'."""
+        bucket_start, _ = self._week_bucket(target_date)
+        return self._geo_article_counts.get(bucket_start)
 
     def news_score(self, target_date: str) -> float | None:
         """Weekly-bucketed real historical reconstruction of the GBP/USD
@@ -136,6 +146,9 @@ class GaugeHistory:
             published_after = bucket_start.strftime("%Y-%m-%dT00:00:00Z")
             published_before = bucket_end.strftime("%Y-%m-%dT00:00:00Z")
             headlines = freenews_client.fetch_gbp_usd_headlines_range(published_after, published_before)
+            self._news_article_counts[bucket_start] = {
+                "gbp": len(headlines["gbp"]), "usd": len(headlines["usd"]),
+            }
             gbp_result = llm_client.interpret_currency_headlines(headlines["gbp"], "GBP")
             usd_result = llm_client.interpret_currency_headlines(headlines["usd"], "USD")
             score = round((gbp_result["score"] - usd_result["score"]) / 2, 4)
@@ -143,6 +156,13 @@ class GaugeHistory:
             score = None
         self._news_cache[bucket_start] = score
         return score
+
+    def news_article_counts(self, target_date: str) -> dict | None:
+        """Diagnostic: how many GBP/USD-classified articles were found for
+        this week, so a 0.0 score can be told apart as 'genuinely no
+        matching headlines' vs some other issue."""
+        bucket_start, _ = self._week_bucket(target_date)
+        return self._news_article_counts.get(bucket_start)
 
     def yield_score(self, target_date: str) -> float | None:
         us = _value_as_of(self.us_yield_series, target_date)
