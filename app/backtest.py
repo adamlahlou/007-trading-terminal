@@ -223,6 +223,18 @@ def run_backtest(
                         else:
                             stop_price = min(stop_price, candidate_stop)
                     # else: still within the hold period -- stop stays put at its initial level
+
+                # Re-check the stop against this SAME candle's range right after
+                # updating it -- without this, a single volatile candle that both
+                # tightens the stop (via a favorable brick forming) AND moves far
+                # enough to breach that new level would "leapfrog" past it
+                # undetected, since the next stop-check wouldn't run until the
+                # following candle. This is what let some trades show a deeper
+                # loss than the trailing distance being tested actually allowed.
+                if position == 1 and candle["low"] <= stop_price:
+                    close_trade(stop_price, b.formed_at, "stop")
+                elif position == -1 and candle["high"] >= stop_price:
+                    close_trade(stop_price, b.formed_at, "stop")
             else:
                 # Reversal brick against an open position -- shouldn't
                 # normally happen since the stop-check above should have
