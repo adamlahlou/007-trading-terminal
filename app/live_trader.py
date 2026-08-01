@@ -6,18 +6,19 @@ actually runs. Persists position state across scans/restarts, and records
 entry/exit events tagged to specific brick sequence numbers so the chart
 can show a dot at exactly the right spot.
 
-Rule being run: NO entry is taken -- fresh from flat, a same-direction
+Entry rule: NO entry is taken -- fresh from flat, a same-direction
 continuation, or even a genuine reversal brick -- unless 2+ of 3 gauges
-(yield, COT, momentum) agree with that direction. This is the strictest of
-the modes tested in backtesting, and had the best profit factor and
-smallest drawdown of everything compared (switched to from the looser
-"majority-override on continuations only" rule after live entries were
-firing with no real gauge backing at all).
+(yield, COT, momentum) agree with that direction.
+
+Trailing rule: breakeven-then-wide -- hold the stop unmoved for 2 bricks,
+then move it to EXACT breakeven, then trail a full 2 boxes (44 pips) from
+there on. Switched from a tighter 1-box trail after it was closing real
+trades on ordinary 1-box pullbacks that weren't genuine reversals.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
 from . import db, notifier
-from .backtest import INITIAL_STOP_PIPS, HOLD_BRICKS_BEFORE_TRAILING, TRAIL_BOXES, PIP, _continuation_allowed
+from .backtest import INITIAL_STOP_PIPS, BREAKEVEN_AFTER_BRICKS, WIDE_TRAIL_BOXES, PIP, _continuation_allowed
 
 
 def _current_gauge_votes() -> dict:
@@ -100,15 +101,26 @@ def process_scan(candle_brick_groups: list[tuple[dict, list[tuple[object, int]]]
                 open_position(b.direction, b.close, b.formed_at, seq, "entry")
             elif b.direction == position:
                 favorable_bricks += 1
-                if favorable_bricks >= HOLD_BRICKS_BEFORE_TRAILING:
-                    trail_dist = TRAIL_BOXES * box_size
+                # breakeven-then-wide: hold still for 2 bricks, then move to
+                # EXACT breakeven, then trail a full 2 boxes (44 pips) from
+                # there -- avoids closing out on an ordinary 1-box pullback
+                # that isn't a genuine reversal.
+                if favorable_bricks == BREAKEVEN_AFTER_BRICKS:
+                    stop_price = entry_price
+                elif favorable_bricks > BREAKEVEN_AFTER_BRICKS:
+                    trail_dist = WIDE_TRAIL_BOXES * box_size
                     candidate_stop = b.close - trail_dist if position == 1 else b.close + trail_dist
                     stop_price = max(stop_price, candidate_stop) if position == 1 else min(stop_price, candidate_stop)
             else:
                 # Genuine reversal brick -- close the old position regardless
-                # (exiting an invalidated position is never gated), but only
-                # flip into the new direction if the gauges actually back it.
-                close(b.open, b.formed_at, seq, "reversal")
+                # (exiting an invalidated position is never gated). Exit at
+                # whichever price is more protective between the tracked
+                # stop (which may already be at breakeven or the wide trail)
+                # and the reversal brick's CLOSE (the true 2-box/44-pip
+                # point a genuine reversal requires) -- using the brick's
+                # raw open understated the real adverse move.
+                exit_price = max(stop_price, b.close) if position == 1 else min(stop_price, b.close)
+                close(exit_price, b.formed_at, seq, "reversal")
                 if _gauges_support(b.direction):
                     open_position(b.direction, b.close, b.formed_at, seq, "reversal_entry")
 
