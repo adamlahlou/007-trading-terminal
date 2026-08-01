@@ -95,6 +95,7 @@ def run_backtest(
     gate_threshold: int = 2,
     start_date: str | None = None,
     end_date: str | None = None,
+    debug_gauges: bool = False,
 ) -> dict:
     """
     start_date/end_date (YYYY-MM-DD): test a SPECIFIC historical window
@@ -148,6 +149,19 @@ def run_backtest(
     gauge_hist = None
     if (require_reversal_to_reenter and continuation_override) or gate_all_entries:
         gauge_hist = GaugeHistory(start.date(), now.date())
+
+    gauge_samples = None
+    if debug_gauges and gauge_hist is not None:
+        # Sample every 3 days across the window so we can SEE what the
+        # gauges actually said throughout, rather than assuming either
+        # "genuine divergence" or "a bug" -- lets that be checked directly.
+        gauge_samples = []
+        sample_date = start
+        while sample_date <= now:
+            iso = sample_date.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+            votes = gauge_hist.votes_as_of(iso)
+            gauge_samples.append({"date": sample_date.date().isoformat(), "votes": votes})
+            sample_date += timedelta(days=3)
 
     state = RenkoState(box_size=box_size)
     initial_stop_dist = INITIAL_STOP_PIPS * PIP
@@ -298,6 +312,8 @@ def run_backtest(
 
     result = _summarize(trades, days, require_reversal_to_reenter, continuation_override, gate_all_entries, trailing_mode, gate_threshold)
     result["window"] = f"{start.date().isoformat()} to {now.date().isoformat()}"
+    if gauge_samples is not None:
+        result["gauge_samples"] = gauge_samples
     return result
 
 
