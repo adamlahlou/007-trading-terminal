@@ -14,7 +14,7 @@ it couldn't have known yet, which would make the results meaningless.
 """
 from __future__ import annotations
 from datetime import date, timedelta, datetime
-from . import fred_client, cot_client, rate_tone_client
+from . import fred_client, cot_client, rate_tone_client, freenews_client, llm_client
 from .calendar_schedule import FOMC_DATES_2026, BOE_MPC_DATES_2026
 
 
@@ -61,6 +61,13 @@ class GaugeHistory:
         )
         self._rate_tone_cache: dict[tuple[str, date], float | None] = {}
 
+        # News/geopolitical: weekly buckets (anchored to start_date), each
+        # fetched+interpreted once and cached -- keeps real API/LLM calls
+        # to ~4-5 per gauge per month rather than one per query date.
+        self._history_start = start_date
+        self._geo_cache: dict[date, float | None] = {}
+        self._news_cache: dict[date, float | None] = {}
+
     def rate_tone_score(self, target_date: str) -> float | None:
         """Finds the most recent FOMC/BoE meeting on or before target_date,
         fetches the REAL historical statement for it (only once -- cached
@@ -89,6 +96,52 @@ class GaugeHistory:
         except Exception:
             score = None  # a fetch/parse failure shouldn't crash the whole backtest
         self._rate_tone_cache[most_recent] = score
+        return score
+
+    def _week_bucket(self, target_date: str) -> tuple[date, date]:
+        target = datetime.strptime(target_date[:10], "%Y-%m-%d").date()
+        days_since_start = max(0, (target - self._history_start).days)
+        bucket_index = days_since_start // 7
+        bucket_start = self._history_start + timedelta(days=bucket_index * 7)
+        bucket_end = bucket_start + timedelta(days=7)
+        return bucket_start, bucket_end
+
+    def geopolitical_score(self, target_date: str) -> float | None:
+        """Weekly-bucketed real historical reconstruction -- fetches real
+        archived headlines for that week (only once, cached), runs them
+        through the exact same LLM severity-judgment used live."""
+        bucket_start, bucket_end = self._week_bucket(target_date)
+        if bucket_start in self._geo_cache:
+            return self._geo_cache[bucket_start]
+        try:
+            published_after = bucket_start.strftime("%Y-%m-%dT00:00:00Z")
+            published_before = bucket_end.strftime("%Y-%m-%dT00:00:00Z")
+            headlines = freenews_client.fetch_geopolitical_headlines_range(published_after, published_before)
+            result = llm_client.interpret_geopolitical_headlines(headlines)
+            score = result["score"]
+        except Exception:
+            score = None  # a fetch/parse failure shouldn't crash the whole backtest
+        self._geo_cache[bucket_start] = score
+        return score
+
+    def news_score(self, target_date: str) -> float | None:
+        """Weekly-bucketed real historical reconstruction of the GBP/USD
+        news sentiment gauge -- same (GBP score - USD score)/2 combination
+        as the live gauge, just built from real archived headlines for
+        that week instead of today's."""
+        bucket_start, bucket_end = self._week_bucket(target_date)
+        if bucket_start in self._news_cache:
+            return self._news_cache[bucket_start]
+        try:
+            published_after = bucket_start.strftime("%Y-%m-%dT00:00:00Z")
+            published_before = bucket_end.strftime("%Y-%m-%dT00:00:00Z")
+            headlines = freenews_client.fetch_gbp_usd_headlines_range(published_after, published_before)
+            gbp_result = llm_client.interpret_currency_headlines(headlines["gbp"], "GBP")
+            usd_result = llm_client.interpret_currency_headlines(headlines["usd"], "USD")
+            score = round((gbp_result["score"] - usd_result["score"]) / 2, 4)
+        except Exception:
+            score = None
+        self._news_cache[bucket_start] = score
         return score
 
     def yield_score(self, target_date: str) -> float | None:
@@ -141,11 +194,12 @@ class GaugeHistory:
         hot_data_score = (norm_nfp + norm_cpi) / 2
         return -hot_data_score  # same inversion as the live gauge
 
-    def votes_as_of(self, target_date: str, threshold: float = 0.1, include_rate_tone: bool = False) -> dict:
+    def votes_as_of(self, target_date: str, threshold: float = 0.1, include_rate_tone: bool = False, include_news_geo: bool = False) -> dict:
         """Returns {gauge_name: -1/0/1} for whichever gauges have data
         available yet at this point in the window. include_rate_tone=True
-        adds rate_tone to the set (default False preserves the original
-        yield/COT/momentum-only gate exactly as validated)."""
+        adds rate_tone; include_news_geo=True adds news and geo (both
+        weekly-bucketed real reconstructions). Default False on both
+        preserves the original yield/COT/momentum-only gate exactly as validated."""
         votes = {}
         y, c, m = self.yield_score(target_date), self.cot_score(target_date), self.momentum_score(target_date)
         for name, score in (("yield", y), ("cot", c), ("momentum", m)):
@@ -161,4 +215,11 @@ class GaugeHistory:
             rt = self.rate_tone_score(target_date)
             if rt is not None:
                 votes["rate_tone"] = 1 if rt > threshold else (-1 if rt < -threshold else 0)
+        if include_news_geo:
+            geo = self.geopolitical_score(target_date)
+            if geo is not None:
+                votes["geo"] = 1 if geo > threshold else (-1 if geo < -threshold else 0)
+            news = self.news_score(target_date)
+            if news is not None:
+                votes["news"] = 1 if news > threshold else (-1 if news < -threshold else 0)
         return votes

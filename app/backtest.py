@@ -63,11 +63,16 @@ SIMPLE_WIDENED_TRAIL_BOXES = 1.5
 
 def _get_votes(gauge_hist, at_time: str, gauge_set: str) -> dict:
     """gauge_set='yield_cot_momentum' (default, the originally validated
-    set) or 'momentum_rate_tone' -- momentum + real historical rate-tone
-    reconstruction instead of yield/COT."""
+    set), 'momentum_rate_tone' (momentum + real historical rate-tone
+    instead of yield/COT), or 'news_geo_rate_tone' -- the 3 fast,
+    event-driven gauges (real weekly-bucketed news/geo reconstruction +
+    real rate-tone), dropping yield/COT/momentum entirely."""
     if gauge_set == "momentum_rate_tone":
         votes = gauge_hist.votes_as_of(at_time, include_rate_tone=True)
         return {k: v for k, v in votes.items() if k in ("momentum", "rate_tone")}
+    if gauge_set == "news_geo_rate_tone":
+        votes = gauge_hist.votes_as_of(at_time, include_rate_tone=True, include_news_geo=True)
+        return {k: v for k, v in votes.items() if k in ("news", "geo", "rate_tone")}
     return gauge_hist.votes_as_of(at_time)
 
 
@@ -177,6 +182,9 @@ def run_backtest(
                 "momentum": gauge_hist.momentum_score(iso),
                 "rate_tone": gauge_hist.rate_tone_score(iso),
             }
+            if gauge_set == "news_geo_rate_tone":
+                raw_scores["geo"] = gauge_hist.geopolitical_score(iso)
+                raw_scores["news"] = gauge_hist.news_score(iso)
             gauge_samples.append({"date": sample_date.date().isoformat(), "votes": votes, "raw_scores": raw_scores})
             sample_date += timedelta(days=3)
 

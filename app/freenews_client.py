@@ -26,20 +26,22 @@ USD_KEYWORDS = ["usd", "dollar", "federal reserve", " fed ", "non-farm", "nonfar
 OTHER_DOLLAR_CURRENCIES = ["canadian dollar", "australian dollar", "new zealand dollar", "nz dollar", "singapore dollar", "hong kong dollar", "taiwan dollar"]
 
 
-def _fetch_headlines(topic: str, limit: int, lookback_hours: int) -> list[dict]:
+def _fetch_headlines_range(topic: str, limit: int, published_after: str, published_before: str | None = None) -> list[dict]:
+    """Low-level fetch with explicit published_after/published_before (both
+    ISO strings) -- used for both live (computed from lookback_hours) and
+    historical (explicit date range) fetching, so both paths share one
+    tested code path rather than diverging."""
     if not FREENEWS_API_KEY:
         raise RuntimeError("FREENEWS_API_KEY is not set")
 
-    published_after = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    params = {"language": "en", "topic": topic, "published_after": published_after}
+    if published_before:
+        params["published_before"] = published_before
 
     resp = requests.get(
         BASE_URL,
         headers={"x-api-key": FREENEWS_API_KEY},
-        params={
-            "language": "en",
-            "topic": topic,
-            "published_after": published_after,
-        },
+        params=params,
         timeout=20,
     )
     resp.raise_for_status()
@@ -51,6 +53,34 @@ def _fetch_headlines(topic: str, limit: int, lookback_hours: int) -> list[dict]:
         for a in articles
         if a.get("title")
     ]
+
+
+def _fetch_headlines(topic: str, limit: int, lookback_hours: int) -> list[dict]:
+    published_after = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _fetch_headlines_range(topic, limit, published_after)
+
+
+def _classify_gbp_usd(articles: list[dict]) -> dict:
+    """Shared classification logic (used by both live and historical
+    fetching) -- our own keyword matching, not a vendor search-string
+    query, per the Marketaux lesson."""
+    seen_titles = set()
+    unique_articles = []
+    for a in articles:
+        if a["title"] not in seen_titles:
+            seen_titles.add(a["title"])
+            unique_articles.append(a)
+
+    gbp_headlines, usd_headlines = [], []
+    for a in unique_articles:
+        title_lower = f" {a['title'].lower()} "
+        mentions_other_dollar = any(od in title_lower for od in OTHER_DOLLAR_CURRENCIES)
+        if any(kw in title_lower for kw in GBP_KEYWORDS):
+            gbp_headlines.append(a)
+        if any(kw in title_lower for kw in USD_KEYWORDS) and not mentions_other_dollar:
+            usd_headlines.append(a)
+
+    return {"gbp": gbp_headlines, "usd": usd_headlines}
 
 
 def fetch_geopolitical_headlines(limit: int = 15, lookback_hours: int = 24) -> list[dict]:
@@ -68,22 +98,18 @@ def fetch_gbp_usd_headlines(lookback_hours: int = 48) -> dict:
     all_articles = []
     for topic in ("finance", "business", "economy"):
         all_articles.extend(_fetch_headlines(topic, limit=25, lookback_hours=lookback_hours))
+    return _classify_gbp_usd(all_articles)
 
-    # de-dupe by title (same story can appear under multiple topic tags)
-    seen_titles = set()
-    unique_articles = []
-    for a in all_articles:
-        if a["title"] not in seen_titles:
-            seen_titles.add(a["title"])
-            unique_articles.append(a)
 
-    gbp_headlines, usd_headlines = [], []
-    for a in unique_articles:
-        title_lower = f" {a['title'].lower()} "
-        mentions_other_dollar = any(od in title_lower for od in OTHER_DOLLAR_CURRENCIES)
-        if any(kw in title_lower for kw in GBP_KEYWORDS):
-            gbp_headlines.append(a)
-        if any(kw in title_lower for kw in USD_KEYWORDS) and not mentions_other_dollar:
-            usd_headlines.append(a)
+def fetch_geopolitical_headlines_range(published_after: str, published_before: str, limit: int = 15) -> list[dict]:
+    """Historical version -- same topic filter, explicit date range instead
+    of a lookback from now. Used for backtesting."""
+    return _fetch_headlines_range("world", limit, published_after, published_before)
 
-    return {"gbp": gbp_headlines, "usd": usd_headlines}
+
+def fetch_gbp_usd_headlines_range(published_after: str, published_before: str) -> dict:
+    """Historical version of fetch_gbp_usd_headlines -- explicit date range."""
+    all_articles = []
+    for topic in ("finance", "business", "economy"):
+        all_articles.extend(_fetch_headlines_range(topic, limit=25, published_after=published_after, published_before=published_before))
+    return _classify_gbp_usd(all_articles)

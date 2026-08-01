@@ -334,10 +334,10 @@ async def api_backtest(days: int = 45, reversal_only: bool = False, continuation
     the 2-brick threshold; simple_22_33 trails 1 box (22 pips) from the
     very first favorable brick with no hold period, widening to 1.5
     boxes (33 pips) once 44+ pips profit is reached.
-    gauge_set=yield_cot_momentum (default, the originally validated set)
-    or momentum_rate_tone -- momentum + REAL historical rate-tone
-    reconstruction (actual FOMC/BoE statement text, real LLM
-    interpretation, cached per meeting) instead of yield/COT."""
+    gauge_set=yield_cot_momentum (default, the originally validated set),
+    momentum_rate_tone, or news_geo_rate_tone -- the 3 fast, event-driven
+    gauges (real weekly-bucketed news/geo reconstruction + real rate-tone),
+    dropping yield/COT/momentum entirely."""
     try:
         result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges, gauge_set)
         return JSONResponse(result)
