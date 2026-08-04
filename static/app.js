@@ -597,23 +597,39 @@ async function loadCotGauge() {
 
 loadCotGauge();
 
-// ---- US data momentum gauge (NFP/CPI) ----
+// ---- GBP/USD Past Macro News (blended): US Data Trend (NFP/CPI) +
+// Rate Tone combined into ONE score/verdict. Both remain FYI-only -- not
+// trading gate inputs. Blended as a simple average of the two already
+// GBPUSD-directional scores; if rate tone has no data yet, falls back to
+// momentum alone rather than blocking on it.
 async function loadMomentumGauge() {
   const body = document.getElementById('momentum-gauge-body');
   try {
-    const res = await fetch('/api/momentum');
-    const d = await res.json();
+    const [momentumRes, rateToneRes] = await Promise.all([
+      fetch('/api/momentum'),
+      fetch('/api/rate-tone'),
+    ]);
+    const d = await momentumRes.json();
+    const rt = await rateToneRes.json();
+
     if (!d || d.gauge_score === undefined) {
-      body.innerHTML = `<div class="dim-small">No momentum data yet.</div>`;
+      body.innerHTML = `<div class="dim-small">No past macro news yet.</div>`;
       return;
     }
 
-    const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
-    const verdict = gbpusdVerdict(d.gauge_score);
-    state.gaugeVerdicts.momentum = d.gauge_score;
+    const hasRateTone = rt && rt.gauge_score !== undefined;
+    const blendedScore = hasRateTone ? (d.gauge_score + rt.gauge_score) / 2 : d.gauge_score;
+
+    const pct = 50 + Math.max(-1, Math.min(1, blendedScore)) * 50;
+    const verdict = gbpusdVerdict(blendedScore);
+    state.gaugeVerdicts.momentum = blendedScore;
     updateMacroBadge();
+
     const dataNote = d.gauge_score > 0.15 ? 'Cooling US data'
       : (d.gauge_score < -0.15 ? 'Hot US data' : 'US data roughly in line');
+    const rateToneNote = hasRateTone
+      ? `${rt.bank} · ${rt.meeting_date}${rt.reason ? ` — ${rt.reason}` : ''}`
+      : 'No recent rate decision to factor in yet';
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
@@ -624,9 +640,10 @@ async function loadMomentumGauge() {
         <div>CPI YoY: <b>${d.cpi_yoy}%</b> <span class="dim-small">(${d.cpi_date})</span></div>
         <div>NFP: <b>${d.nfp_change > 0 ? '+' : ''}${d.nfp_change}k</b> <span class="dim-small">(${d.nfp_date})</span></div>
       </div>
+      <div class="dim-small" style="margin-top:4px;">${rateToneNote}</div>
     `;
   } catch (e) {
-    body.innerHTML = `<div class="dim-small">Momentum data unavailable: ${e.message}</div>`;
+    body.innerHTML = `<div class="dim-small">Past macro news unavailable: ${e.message}</div>`;
   }
 }
 
@@ -690,7 +707,7 @@ async function loadGeoGauge() {
 
 loadGeoGauge();
 
-// ---- Rate decision tone gauge (Fed/BoE) ----
+// ---- Rate decision tone gauge (Fed/BoE) -- still its own standalone panel too ----
 async function loadRateToneGauge() {
   const body = document.getElementById('rate-tone-gauge-body');
   try {
