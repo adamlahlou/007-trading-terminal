@@ -102,11 +102,16 @@ function drawBricks() {
   const radius = 4;
   const vPad = 20;
 
-  let level = 0;
-  const levels = shown.map((b) => {
-    level += b.direction === 1 ? -1 : 1;
-    return level;
-  });
+  // Levels must be derived from REAL price, not a naive +-1-per-brick
+  // counter -- a counter assumes every brick is exactly one box-size move
+  // from the last, which is true for a continuation brick but NOT for a
+  // reversal brick (whose open sits one full box back from the prior
+  // close by Renko convention, making its true gap 2 boxes, not 1). A
+  // naive counter silently drifts out of sync with the price axis right
+  // after any reversal. Anchoring on real close price keeps both exactly
+  // in sync regardless of how many reversals happened along the way.
+  const anchorClose = shown[0].close;
+  const levels = shown.map((b) => Math.round((anchorClose - b.close) / boxSize));
 
   // Reserve headroom on both ends so the pending ghost bar (which can now
   // sit up to ~1 level beyond the last brick, for clearer separation) never clips.
