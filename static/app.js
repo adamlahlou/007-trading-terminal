@@ -102,24 +102,30 @@ function drawBricks() {
   const radius = 4;
   const vPad = 20;
 
-  // Levels must be derived from REAL price, not a naive +-1-per-brick
-  // counter -- a counter assumes every brick is exactly one box-size move
-  // from the last, which is true for a continuation brick but NOT for a
-  // reversal brick (whose open sits one full box back from the prior
-  // close by Renko convention, making its true gap 2 boxes, not 1). A
-  // naive counter silently drifts out of sync with the price axis right
-  // after any reversal. Anchoring on real close price keeps both exactly
-  // in sync regardless of how many reversals happened along the way.
-  const anchorClose = shown[0].close;
-  const levels = shown.map((b) => Math.round((anchorClose - b.close) / boxSize));
+  // Position every brick continuously from its REAL open/close price --
+  // not a rounded integer "level" per brick. Confirmed against a real
+  // TradingView Renko chart: a reversal brick's open sits at EXACTLY the
+  // same price as the second-to-last prior-trend brick's close, so
+  // drawing directly from real price means they touch with zero gap and
+  // zero overlap automatically, for any sequence -- no special-casing
+  // reversals needed at all, the real price math just handles it.
+  const anchorPrice = shown[shown.length - 1].close;
+  const boxUnits = (price) => (anchorPrice - price) / boxSize; // positive = below anchor (lower price)
 
-  // Reserve headroom on both ends so the pending ghost bar (which can now
-  // sit up to ~1 level beyond the last brick, for clearer separation) never clips.
-  const minLevel = Math.min(...levels, 0) - 1.2;
-  const maxLevel = Math.max(...levels, 0) + 1.2;
-  const numRows = maxLevel - minLevel + 1;
+  let minUnits = 0, maxUnits = 0;
+  shown.forEach((b) => {
+    minUnits = Math.min(minUnits, boxUnits(b.open), boxUnits(b.close));
+    maxUnits = Math.max(maxUnits, boxUnits(b.open), boxUnits(b.close));
+  });
+  // Reserve headroom on both ends so the pending ghost bar (which can sit
+  // up to ~1 unit beyond the last brick, for clearer separation) never clips.
+  minUnits -= 1.2;
+  maxUnits += 1.2;
+
+  const numRows = maxUnits - minUnits + 1;
   const brickH = Math.min(28, (h - vPad * 2) / numRows);
-  const yFor = (lvl) => vPad + (lvl - minLevel) * brickH;
+  const yForUnits = (u) => vPad + (u - minUnits) * brickH;
+  const yForPrice = (price) => yForUnits(boxUnits(price));
 
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
   const amber = getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
@@ -127,14 +133,12 @@ function drawBricks() {
 
   // ---- Price axis: label each gridline with the real price it represents ----
   if (boxSize && shown.length) {
-    const lastLevel = levels[levels.length - 1];
-    const lastClose = shown[shown.length - 1].close;
     ctx.fillStyle = dim;
     ctx.font = "10px 'IBM Plex Mono', monospace";
     ctx.textAlign = 'left';
     for (let y = 0; y < h; y += h / 8) {
-      const lvlAtY = minLevel + (y - vPad) / brickH;
-      const priceAtY = lastClose - (lvlAtY - lastLevel) * boxSize;
+      const unitsAtY = minUnits + (y - vPad) / brickH;
+      const priceAtY = anchorPrice - unitsAtY * boxSize;
       ctx.fillText(priceAtY.toFixed(4), gridEndX + 6, y + 3);
     }
   }
@@ -147,8 +151,12 @@ function drawBricks() {
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
-    const y = yFor(levels[i]);
-    const bh = brickH * 0.9;
+    const topPrice = Math.max(b.open, b.close);
+    const bottomPrice = Math.min(b.open, b.close);
+    const yTop = yForPrice(topPrice);
+    const yBottom = yForPrice(bottomPrice);
+    const y = yTop;
+    const bh = Math.max(4, (yBottom - yTop) * 0.9); // small gap between bricks, same visual convention as before
 
     roundedRectPath(ctx, x, y, brickW, bh, radius);
     if (b.direction === 1) {
@@ -238,14 +246,13 @@ function drawBricks() {
   // unambiguously at a glance.
   if (livePrice != null) {
     const lastBrick = shown[shown.length - 1];
-    const lastLevel = levels[levels.length - 1];
     const diff = livePrice - lastBrick.close;
     const pendingUp = diff >= 0;
-    const pendingLevel = lastLevel + (pendingUp ? -0.85 : 0.85);
+    const pendingUnits = boxUnits(lastBrick.close) + (pendingUp ? -0.85 : 0.85);
 
     const x = padding + shown.length * slotW + (slotW - brickW) / 2;
     const ghostH = brickH * 0.6;
-    const centerY = yFor(pendingLevel);
+    const centerY = yForUnits(pendingUnits);
     const top = centerY - ghostH / 2;
 
     roundedRectPath(ctx, x, top, brickW, ghostH, radius);
