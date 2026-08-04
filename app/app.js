@@ -43,7 +43,29 @@ function roundedRectPath(ctx, x, y, w, h, r) {
 
 // Shared state, updated independently by the bricks load (30min-ish) and
 // the live price poll (every 3s) -- drawBricks() is re-run after either changes.
-let state = { bricks: [], boxSize: 0.0022, livePrice: null, liveTradeEventsBySeq: {} };
+let state = { bricks: [], boxSize: 0.0022, livePrice: null, liveTradeEventsBySeq: {}, gaugeVerdicts: {} };
+
+// Aggregates every gauge's current verdict into one top-level macro read.
+// Called after each individual gauge finishes loading -- majority of
+// available bullish/bearish votes decides it; a tie (including "everything
+// neutral") reads as MIXED rather than picking a side arbitrarily.
+function updateMacroBadge() {
+  const badge = document.getElementById('macro-badge');
+  if (!badge) return;
+  const verdicts = Object.values(state.gaugeVerdicts);
+  if (!verdicts.length) { badge.textContent = ''; return; }
+
+  const bullish = verdicts.filter(v => v > 0.15).length;
+  const bearish = verdicts.filter(v => v < -0.15).length;
+
+  let text, color;
+  if (bullish > bearish) { text = 'BULLISH MACRO'; color = 'var(--white)'; }
+  else if (bearish > bullish) { text = 'BEARISH MACRO'; color = 'var(--blue)'; }
+  else { text = 'MIXED MACRO'; color = 'var(--amber)'; }
+
+  badge.textContent = text;
+  badge.style.color = color;
+}
 
 function drawBricks() {
   const { bricks, livePrice, boxSize } = state;
@@ -80,19 +102,30 @@ function drawBricks() {
   const radius = 4;
   const vPad = 20;
 
-  let level = 0;
-  const levels = shown.map((b) => {
-    level += b.direction === 1 ? -1 : 1;
-    return level;
-  });
+  // Position every brick continuously from its REAL open/close price --
+  // not a rounded integer "level" per brick. Confirmed against a real
+  // TradingView Renko chart: a reversal brick's open sits at EXACTLY the
+  // same price as the second-to-last prior-trend brick's close, so
+  // drawing directly from real price means they touch with zero gap and
+  // zero overlap automatically, for any sequence -- no special-casing
+  // reversals needed at all, the real price math just handles it.
+  const anchorPrice = shown[shown.length - 1].close;
+  const boxUnits = (price) => (anchorPrice - price) / boxSize; // positive = below anchor (lower price)
 
-  // Reserve headroom on both ends so the pending ghost bar (which can now
-  // sit up to ~1 level beyond the last brick, for clearer separation) never clips.
-  const minLevel = Math.min(...levels, 0) - 1.2;
-  const maxLevel = Math.max(...levels, 0) + 1.2;
-  const numRows = maxLevel - minLevel + 1;
+  let minUnits = 0, maxUnits = 0;
+  shown.forEach((b) => {
+    minUnits = Math.min(minUnits, boxUnits(b.open), boxUnits(b.close));
+    maxUnits = Math.max(maxUnits, boxUnits(b.open), boxUnits(b.close));
+  });
+  // Reserve headroom on both ends so the pending ghost bar (which can sit
+  // up to ~1 unit beyond the last brick, for clearer separation) never clips.
+  minUnits -= 1.2;
+  maxUnits += 1.2;
+
+  const numRows = maxUnits - minUnits + 1;
   const brickH = Math.min(28, (h - vPad * 2) / numRows);
-  const yFor = (lvl) => vPad + (lvl - minLevel) * brickH;
+  const yForUnits = (u) => vPad + (u - minUnits) * brickH;
+  const yForPrice = (price) => yForUnits(boxUnits(price));
 
   const white = getComputedStyle(document.documentElement).getPropertyValue('--white').trim();
   const amber = getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
@@ -100,14 +133,12 @@ function drawBricks() {
 
   // ---- Price axis: label each gridline with the real price it represents ----
   if (boxSize && shown.length) {
-    const lastLevel = levels[levels.length - 1];
-    const lastClose = shown[shown.length - 1].close;
     ctx.fillStyle = dim;
     ctx.font = "10px 'IBM Plex Mono', monospace";
     ctx.textAlign = 'left';
     for (let y = 0; y < h; y += h / 8) {
-      const lvlAtY = minLevel + (y - vPad) / brickH;
-      const priceAtY = lastClose - (lvlAtY - lastLevel) * boxSize;
+      const unitsAtY = minUnits + (y - vPad) / brickH;
+      const priceAtY = anchorPrice - unitsAtY * boxSize;
       ctx.fillText(priceAtY.toFixed(4), gridEndX + 6, y + 3);
     }
   }
@@ -120,8 +151,12 @@ function drawBricks() {
 
   shown.forEach((b, i) => {
     const x = padding + i * slotW + (slotW - brickW) / 2;
-    const y = yFor(levels[i]);
-    const bh = brickH * 0.9;
+    const topPrice = Math.max(b.open, b.close);
+    const bottomPrice = Math.min(b.open, b.close);
+    const yTop = yForPrice(topPrice);
+    const yBottom = yForPrice(bottomPrice);
+    const y = yTop;
+    const bh = Math.max(4, (yBottom - yTop) * 0.9); // small gap between bricks, same visual convention as before
 
     roundedRectPath(ctx, x, y, brickW, bh, radius);
     if (b.direction === 1) {
@@ -211,14 +246,22 @@ function drawBricks() {
   // unambiguously at a glance.
   if (livePrice != null) {
     const lastBrick = shown[shown.length - 1];
-    const lastLevel = levels[levels.length - 1];
     const diff = livePrice - lastBrick.close;
     const pendingUp = diff >= 0;
-    const pendingLevel = lastLevel + (pendingUp ? -0.85 : 0.85);
+    // Clear the last brick's own actual span (its real open/close, a full
+    // box now that positioning is continuous) plus a visible gap -- NOT a
+    // flat offset from the anchor point, which used to work when each
+    // brick occupied a single row but now lands inside the last brick's
+    // own body since it spans a full box either side of the anchor.
+    const lastTopPrice = Math.max(lastBrick.open, lastBrick.close);
+    const lastBottomPrice = Math.min(lastBrick.open, lastBrick.close);
+    const pendingUnits = pendingUp
+      ? boxUnits(lastTopPrice) - 0.5
+      : boxUnits(lastBottomPrice) + 0.5;
 
     const x = padding + shown.length * slotW + (slotW - brickW) / 2;
     const ghostH = brickH * 0.6;
-    const centerY = yFor(pendingLevel);
+    const centerY = yForUnits(pendingUnits);
     const top = centerY - ghostH / 2;
 
     roundedRectPath(ctx, x, top, brickW, ghostH, radius);
@@ -450,6 +493,8 @@ async function loadYields() {
     // spread is already in "positive = GBP favorable" terms, but the raw
     // magnitude (~0.1-0.3 typical) needs its own threshold, not the shared 0.15 default
     const verdict = gbpusdVerdict(clamped / GAUGE_CLAMP, 0.1);
+    state.gaugeVerdicts.yield = clamped / GAUGE_CLAMP;
+    updateMacroBadge();
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
@@ -489,6 +534,8 @@ async function loadNewsGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.score)) * 50;
     const verdict = gbpusdVerdict(d.score);
+    state.gaugeVerdicts.news = d.score;
+    updateMacroBadge();
     const hasGbpScore = d.gbp_score !== null && d.gbp_score !== undefined;
     const hasUsdScore = d.usd_score !== null && d.usd_score !== undefined;
     const breakdown = (hasGbpScore && hasUsdScore)
@@ -540,6 +587,8 @@ async function loadCotGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.1);
+    state.gaugeVerdicts.cot = d.gauge_score;
+    updateMacroBadge();
     const positioningNote = d.gauge_score > 0.1 ? 'Leveraged funds net long GBP'
       : (d.gauge_score < -0.1 ? 'Leveraged funds net short GBP' : 'Leveraged funds roughly flat');
 
@@ -569,21 +618,39 @@ async function loadCotGauge() {
 
 loadCotGauge();
 
-// ---- US data momentum gauge (NFP/CPI) ----
+// ---- GBP/USD Past Macro News (blended): US Data Trend (NFP/CPI) +
+// Rate Tone combined into ONE score/verdict. Both remain FYI-only -- not
+// trading gate inputs. Blended as a simple average of the two already
+// GBPUSD-directional scores; if rate tone has no data yet, falls back to
+// momentum alone rather than blocking on it.
 async function loadMomentumGauge() {
   const body = document.getElementById('momentum-gauge-body');
   try {
-    const res = await fetch('/api/momentum');
-    const d = await res.json();
+    const [momentumRes, rateToneRes] = await Promise.all([
+      fetch('/api/momentum'),
+      fetch('/api/rate-tone'),
+    ]);
+    const d = await momentumRes.json();
+    const rt = await rateToneRes.json();
+
     if (!d || d.gauge_score === undefined) {
-      body.innerHTML = `<div class="dim-small">No momentum data yet.</div>`;
+      body.innerHTML = `<div class="dim-small">No past macro news yet.</div>`;
       return;
     }
 
-    const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
-    const verdict = gbpusdVerdict(d.gauge_score);
+    const hasRateTone = rt && rt.gauge_score !== undefined;
+    const blendedScore = hasRateTone ? (d.gauge_score + rt.gauge_score) / 2 : d.gauge_score;
+
+    const pct = 50 + Math.max(-1, Math.min(1, blendedScore)) * 50;
+    const verdict = gbpusdVerdict(blendedScore);
+    state.gaugeVerdicts.momentum = blendedScore;
+    updateMacroBadge();
+
     const dataNote = d.gauge_score > 0.15 ? 'Cooling US data'
       : (d.gauge_score < -0.15 ? 'Hot US data' : 'US data roughly in line');
+    const rateToneNote = hasRateTone
+      ? `${rt.bank} · ${rt.meeting_date}${rt.reason ? ` — ${rt.reason}` : ''}`
+      : 'No recent rate decision to factor in yet';
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
@@ -594,9 +661,10 @@ async function loadMomentumGauge() {
         <div>CPI YoY: <b>${d.cpi_yoy}%</b> <span class="dim-small">(${d.cpi_date})</span></div>
         <div>NFP: <b>${d.nfp_change > 0 ? '+' : ''}${d.nfp_change}k</b> <span class="dim-small">(${d.nfp_date})</span></div>
       </div>
+      <div class="dim-small" style="margin-top:4px;">${rateToneNote}</div>
     `;
   } catch (e) {
-    body.innerHTML = `<div class="dim-small">Momentum data unavailable: ${e.message}</div>`;
+    body.innerHTML = `<div class="dim-small">Past macro news unavailable: ${e.message}</div>`;
   }
 }
 
@@ -620,6 +688,8 @@ async function loadGeoGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.15);
+    state.gaugeVerdicts.geo = d.gauge_score;
+    updateMacroBadge();
     const note = d.reason
       ? d.reason
       : (d.article_count < 3
@@ -658,7 +728,7 @@ async function loadGeoGauge() {
 
 loadGeoGauge();
 
-// ---- Rate decision tone gauge (Fed/BoE) ----
+// ---- Rate decision tone gauge (Fed/BoE) -- still its own standalone panel too ----
 async function loadRateToneGauge() {
   const body = document.getElementById('rate-tone-gauge-body');
   try {
@@ -671,6 +741,8 @@ async function loadRateToneGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.15);
+    state.gaugeVerdicts.rateTone = d.gauge_score;
+    updateMacroBadge();
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
