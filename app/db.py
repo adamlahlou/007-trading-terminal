@@ -117,6 +117,12 @@ def init_db():
         )
         """
     )
+    # Safe migration: momentum_state already exists in deployed DBs from
+    # before LLM-based interpretation was added -- add the reason column.
+    try:
+        conn.execute("ALTER TABLE momentum_state ADD COLUMN reason TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS geo_state (
@@ -383,18 +389,19 @@ def get_cot_state() -> dict | None:
     return dict(row)
 
 
-def save_momentum_state(cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at):
+def save_momentum_state(cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at, reason=None):
     conn = get_conn()
     conn.execute(
         """
-        INSERT INTO momentum_state (id, cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at)
-        VALUES (1, ?, ?, ?, ?, ?, ?)
+        INSERT INTO momentum_state (id, cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at, reason)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             cpi_yoy=excluded.cpi_yoy, cpi_date=excluded.cpi_date,
             nfp_change=excluded.nfp_change, nfp_date=excluded.nfp_date,
-            gauge_score=excluded.gauge_score, updated_at=excluded.updated_at
+            gauge_score=excluded.gauge_score, updated_at=excluded.updated_at,
+            reason=excluded.reason
         """,
-        (cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at),
+        (cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at, reason),
     )
     conn.commit()
     conn.close()

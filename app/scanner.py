@@ -215,15 +215,33 @@ def run_cot_refresh() -> dict:
 
 
 def run_momentum_refresh() -> dict:
-    result = fred_client.fetch_data_momentum()
+    """Fetches the raw NFP/CPI figures, then has Claude judge their GBPUSD
+    tone with genuine reasoning -- same LLM-driven pattern as rate-tone/geo/
+    news, instead of a purely mechanical threshold score. Falls back to the
+    mechanical score only if the LLM call fails, matching the pattern used
+    everywhere else."""
+    raw = fred_client.fetch_data_momentum()
     now = datetime.now(timezone.utc).isoformat()
+
+    gauge_score = raw["gauge_score"]  # mechanical fallback
+    reason = None
+    try:
+        llm_result = llm_client.interpret_momentum_data(
+            raw["cpi_yoy"], raw["cpi_date"], raw["nfp_change"], raw["nfp_date"]
+        )
+        gauge_score = llm_result["score"]
+        reason = llm_result["reason"]
+        logger.info(f"Momentum (LLM): score {gauge_score} -- {reason}")
+    except Exception as e:
+        logger.warning(f"LLM momentum interpretation failed, falling back to mechanical score: {e}")
+
     db.save_momentum_state(
-        result["cpi_yoy"], result["cpi_date"],
-        result["nfp_change"], result["nfp_date"],
-        result["gauge_score"], now,
+        raw["cpi_yoy"], raw["cpi_date"],
+        raw["nfp_change"], raw["nfp_date"],
+        gauge_score, now, reason=reason,
     )
-    logger.info(f"Momentum refresh: CPI YoY {result['cpi_yoy']}%, NFP change {result['nfp_change']}k, gauge {result['gauge_score']}")
-    return result
+    logger.info(f"Momentum refresh: CPI YoY {raw['cpi_yoy']}%, NFP change {raw['nfp_change']}k, gauge {gauge_score}")
+    return {**raw, "gauge_score": gauge_score, "reason": reason}
 
 
 def run_geo_refresh() -> dict:

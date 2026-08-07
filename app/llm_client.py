@@ -128,3 +128,56 @@ def interpret_currency_headlines(headlines: list[dict], currency: str) -> dict:
     score = max(-1.0, min(1.0, float(parsed["score"])))
     reason = str(parsed.get("reason", "")).strip()[:300]
     return {"score": round(score, 3), "reason": reason}
+
+
+MOMENTUM_PROMPT_TEMPLATE = """You are judging recent US economic data (CPI inflation and Non-Farm Payrolls jobs) for its likely effect on GBPUSD (the British pound vs US dollar).
+
+IMPORTANT: you do NOT have consensus/forecast figures for these releases -- only the raw numbers themselves. Do NOT claim or imply these beat or missed expectations, since you have no way to know that. Judge based on the numbers' own significance, direction, and magnitude, and how they compare to the kind of readings that would typically be considered hot/strong vs cool/weak for the US economy.
+
+Hot/strong US data (high or rising inflation, strong job growth) tends to support a hawkish Federal Reserve stance and a stronger US dollar, which is BEARISH for GBPUSD. Cool/weak US data (low or falling inflation, weak or negative job growth) suggests room for a more dovish Fed and a weaker dollar, which is BULLISH for GBPUSD.
+
+US CPI (year-over-year): {cpi_yoy}% (as of {cpi_date})
+US Non-Farm Payrolls change: {nfp_change}k jobs (as of {nfp_date})
+
+Respond with ONLY a JSON object, no other text, in this exact form:
+{{"score": <float between -1.0 and 1.0, negative = bearish GBPUSD (hot US data), positive = bullish GBPUSD (cool US data)>, "reason": "<one short plain-English sentence explaining the read>"}}"""
+
+
+def interpret_momentum_data(cpi_yoy: float, cpi_date: str, nfp_change: float, nfp_date: str) -> dict:
+    """Judges the actual NFP/CPI figures for GBPUSD tone, same LLM-reasoning
+    pattern as rate-tone/geo/news instead of a purely mechanical threshold
+    score. Deliberately told it lacks consensus/forecast data so it doesn't
+    hallucinate a "beat/missed expectations" claim it has no basis for.
+    Returns {score, reason}. Raises on failure -- caller should handle
+    gracefully same as any other gauge refresh."""
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+
+    prompt = MOMENTUM_PROMPT_TEMPLATE.format(cpi_yoy=cpi_yoy, cpi_date=cpi_date, nfp_change=nfp_change, nfp_date=nfp_date)
+
+    resp = requests.post(
+        API_URL,
+        headers={
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": MODEL,
+            "max_tokens": 200,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    text = data["content"][0]["text"].strip()
+
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise RuntimeError(f"Could not parse JSON from Claude's response: {text[:200]}")
+    parsed = json.loads(match.group(0))
+
+    score = max(-1.0, min(1.0, float(parsed["score"])))
+    reason = str(parsed.get("reason", "")).strip()[:300]
+    return {"score": round(score, 3), "reason": reason}

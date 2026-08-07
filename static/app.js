@@ -248,7 +248,16 @@ function drawBricks() {
     const lastBrick = shown[shown.length - 1];
     const diff = livePrice - lastBrick.close;
     const pendingUp = diff >= 0;
-    const pendingUnits = boxUnits(lastBrick.close) + (pendingUp ? -0.85 : 0.85);
+    // Clear the last brick's own actual span (its real open/close, a full
+    // box now that positioning is continuous) plus a visible gap -- NOT a
+    // flat offset from the anchor point, which used to work when each
+    // brick occupied a single row but now lands inside the last brick's
+    // own body since it spans a full box either side of the anchor.
+    const lastTopPrice = Math.max(lastBrick.open, lastBrick.close);
+    const lastBottomPrice = Math.min(lastBrick.open, lastBrick.close);
+    const pendingUnits = pendingUp
+      ? boxUnits(lastTopPrice) - 0.5
+      : boxUnits(lastBottomPrice) + 0.5;
 
     const x = padding + shown.length * slotW + (slotW - brickW) / 2;
     const ghostH = brickH * 0.6;
@@ -637,8 +646,13 @@ async function loadMomentumGauge() {
     state.gaugeVerdicts.momentum = blendedScore;
     updateMacroBadge();
 
-    const dataNote = d.gauge_score > 0.15 ? 'Cooling US data'
-      : (d.gauge_score < -0.15 ? 'Hot US data' : 'US data roughly in line');
+    // Prefer the LLM's genuine analysis of the actual NFP/CPI figures --
+    // falls back to the old mechanical threshold note only if the LLM call
+    // hasn't run yet or failed on the last refresh.
+    const dataNote = d.reason
+      ? d.reason
+      : (d.gauge_score > 0.15 ? 'Cooling US data'
+          : (d.gauge_score < -0.15 ? 'Hot US data' : 'US data roughly in line'));
     const rateToneNote = hasRateTone
       ? `${rt.bank} · ${rt.meeting_date}${rt.reason ? ` — ${rt.reason}` : ''}`
       : 'No recent rate decision to factor in yet';
