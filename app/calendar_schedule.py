@@ -73,16 +73,20 @@ def _uk_local_to_utc_iso(d: date, hhmm: str) -> str:
     return utc_dt.replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _first_friday(d: date) -> date:
+    first = date(d.year, d.month, 1)
+    while first.weekday() != 4:  # Friday
+        first += timedelta(days=1)
+    return first
+
+
 def _nfp_occurrences(start: date, end: date) -> list[dict]:
     """US Non-Farm Payrolls: always the first Friday of the month, released
     8:30am ET, which is 13:30 UK time for most of the year."""
     events = []
     d = date(start.year, start.month, 1)
     while d <= end:
-        # find first Friday of this month
-        first = d
-        while first.weekday() != 4:  # Friday
-            first += timedelta(days=1)
+        first = _first_friday(d)
         if start <= first <= end:
             events.append(
                 {
@@ -114,6 +118,30 @@ def get_rate_decision_datetimes() -> list[tuple[str, datetime]]:
     for d, hhmm in BOE_MPC_DATES_2026:
         iso = _uk_local_to_utc_iso(d, hhmm)
         results.append(("BoE", datetime.strptime(iso, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)))
+    return results
+
+
+def get_nfp_datetimes(start: date, end: date) -> list[datetime]:
+    """Returns actual UTC datetimes for every NFP release in [start, end] --
+    used to schedule a precise check shortly after each one instead of
+    relying only on a daily poll (which was running at 8am UTC, always
+    BEFORE NFP's actual ~12:30-13:30 UTC release time, so it correctly
+    found nothing new on release day and then waited a full 24h to check
+    again -- meaning the momentum gauge was always at least a day stale
+    for NFP specifically. Same fix pattern as the COT-Friday and rate-
+    decision precise scheduling: known release time, schedule an exact
+    check right after it, on top of the existing daily safety-net poll."""
+    results = []
+    d = date(start.year, start.month, 1)
+    while d <= end:
+        first = _first_friday(d)
+        if start <= first <= end:
+            iso = _uk_local_to_utc_iso(first, "13:30")
+            results.append(datetime.strptime(iso, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc))
+        if d.month == 12:
+            d = date(d.year + 1, 1, 1)
+        else:
+            d = date(d.year, d.month + 1, 1)
     return results
 
 

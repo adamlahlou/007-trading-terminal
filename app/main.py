@@ -37,7 +37,10 @@ async def lifespan(app: FastAPI):
     # NOTE: 19:45 UTC assumes EDT (UTC-4, summer); during EST (UTC-5, winter)
     # this would need to shift to 20:45 UTC -- not auto-adjusted for DST.
     scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", day_of_week="fri", hour="19", minute="45", id="cot_refresh_friday")
-    # NFP/CPI only update monthly -- once a day easily catches it
+    # NFP/CPI only update monthly -- once a day easily catches it (kept as
+    # a safety net; the precise NFP scheduling below is what actually
+    # catches same-day releases -- this daily check alone was always
+    # running BEFORE NFP's real ~12:30-13:30 UTC release time)
     scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
     # Geopolitical risk can move fast -- check more often than the GBP/USD news gauge
     scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*", id="geo_refresh")
@@ -46,8 +49,9 @@ async def lifespan(app: FastAPI):
 
     # Precise scheduling: these release times are publicly known in advance,
     # so schedule an exact check ~20 min after each one instead of relying
-    # only on the 4h poll above (which is kept as a safety net in case a
-    # precise job doesn't fire for some reason, e.g. a redeploy at the wrong moment).
+    # only on the daily/4h polls above (which are kept as safety nets in
+    # case a precise job doesn't fire for some reason, e.g. a redeploy at
+    # the wrong moment).
     now_utc = datetime.now(timezone.utc)
     for bank, decision_dt in calendar_schedule.get_rate_decision_datetimes():
         check_dt = decision_dt + timedelta(minutes=20)
@@ -58,6 +62,23 @@ async def lifespan(app: FastAPI):
                 run_date=check_dt,
                 id=f"rate_tone_precise_{bank}_{decision_dt.date()}",
             )
+
+    # Same pattern for NFP -- always the first Friday of the month at a
+    # known time, so schedule an exact check ~20 min after each one for
+    # the next 12 months, rather than only the daily 8am poll which was
+    # structurally always too early to catch a same-day release.
+    nfp_start = now_utc.date()
+    nfp_end = (now_utc + timedelta(days=365)).date()
+    for nfp_dt in calendar_schedule.get_nfp_datetimes(nfp_start, nfp_end):
+        check_dt = nfp_dt + timedelta(minutes=20)
+        if check_dt > now_utc:
+            scheduler.add_job(
+                lambda: asyncio.to_thread(run_momentum_refresh),
+                "date",
+                run_date=check_dt,
+                id=f"nfp_precise_{nfp_dt.date()}",
+            )
+
     scheduler.start()
 
     async def _startup_scan():
