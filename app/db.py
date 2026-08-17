@@ -26,13 +26,11 @@ def init_db():
         )
         """
     )
-    # Safe migration: bricks table already exists in deployed DBs from
-    # before confluence tracking -- add the columns if not there yet.
     for col_def in ("confluence_matching INTEGER", "confluence_total INTEGER"):
         try:
             conn.execute(f"ALTER TABLE bricks ADD COLUMN {col_def}")
         except sqlite3.OperationalError:
-            pass  # column already exists
+            pass
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS engine_state (
@@ -83,13 +81,11 @@ def init_db():
         )
         """
     )
-    # Safe migration: news_state already exists in deployed DBs from before
-    # the GBP/USD split -- add the new columns if they're not there yet.
     for col_def in ("gbp_score REAL", "usd_score REAL"):
         try:
             conn.execute(f"ALTER TABLE news_state ADD COLUMN {col_def}")
         except sqlite3.OperationalError:
-            pass  # column already exists
+            pass
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS cot_state (
@@ -117,12 +113,10 @@ def init_db():
         )
         """
     )
-    # Safe migration: momentum_state already exists in deployed DBs from
-    # before LLM-based interpretation was added -- add the reason column.
     try:
         conn.execute("ALTER TABLE momentum_state ADD COLUMN reason TEXT")
     except sqlite3.OperationalError:
-        pass  # column already exists
+        pass
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS geo_state (
@@ -137,7 +131,7 @@ def init_db():
     try:
         conn.execute("ALTER TABLE geo_state ADD COLUMN reason TEXT")
     except sqlite3.OperationalError:
-        pass  # column already exists
+        pass
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS rate_tone_state (
@@ -178,6 +172,23 @@ def init_db():
         )
         """
     )
+    # NEW: real order execution log, separate from the theoretical
+    # live_trade_events -- lets the signal price be compared directly
+    # against what actually got executed (including failures).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS live_execution_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            direction INTEGER NOT NULL,
+            signal_price REAL,
+            real_price REAL,
+            slippage_pips REAL,
+            executed_at TEXT NOT NULL,
+            error TEXT
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -211,9 +222,6 @@ def save_state(box_size: float, anchor, last_close, direction: int, last_candle_
 
 
 def append_bricks(bricks: list[dict]) -> list[int]:
-    """Returns the seq number assigned to each brick, in the same order,
-    so callers (the live trade tracker) can tag exactly which brick an
-    entry/exit event belongs to."""
     if not bricks:
         return []
     conn = get_conn()
@@ -263,8 +271,6 @@ def get_brick_count() -> int:
 
 
 def replace_calendar_events(events: list[dict]):
-    """Wipes and replaces the calendar cache with a fresh fetch (it's a
-    rolling window of upcoming events, not a historical log)."""
     conn = get_conn()
     conn.execute("DELETE FROM calendar_events")
     conn.executemany(
@@ -290,13 +296,8 @@ def get_calendar_events() -> list[dict]:
     conn.close()
     return [
         {
-            "time": r["event_time"],
-            "country": r["country"],
-            "event": r["event"],
-            "impact": r["impact"],
-            "actual": r["actual"],
-            "estimate": r["estimate"],
-            "prev": r["prev"],
+            "time": r["event_time"], "country": r["country"], "event": r["event"],
+            "impact": r["impact"], "actual": r["actual"], "estimate": r["estimate"], "prev": r["prev"],
         }
         for r in rows
     ]
@@ -323,9 +324,7 @@ def get_yield_state() -> dict | None:
     conn = get_conn()
     row = conn.execute("SELECT * FROM yield_state WHERE id = 1").fetchone()
     conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    return dict(row) if row else None
 
 
 def save_news_state(score, article_count, headlines, updated_at, gbp_score=None, usd_score=None):
@@ -353,10 +352,8 @@ def get_news_state() -> dict | None:
         return None
     keys = row.keys()
     return {
-        "score": row["score"],
-        "article_count": row["article_count"],
-        "headlines": json.loads(row["headlines_json"]),
-        "updated_at": row["updated_at"],
+        "score": row["score"], "article_count": row["article_count"],
+        "headlines": json.loads(row["headlines_json"]), "updated_at": row["updated_at"],
         "gbp_score": row["gbp_score"] if "gbp_score" in keys else None,
         "usd_score": row["usd_score"] if "usd_score" in keys else None,
     }
@@ -384,9 +381,7 @@ def get_cot_state() -> dict | None:
     conn = get_conn()
     row = conn.execute("SELECT * FROM cot_state WHERE id = 1").fetchone()
     conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    return dict(row) if row else None
 
 
 def save_momentum_state(cpi_yoy, cpi_date, nfp_change, nfp_date, gauge_score, updated_at, reason=None):
@@ -411,9 +406,7 @@ def get_momentum_state() -> dict | None:
     conn = get_conn()
     row = conn.execute("SELECT * FROM momentum_state WHERE id = 1").fetchone()
     conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    return dict(row) if row else None
 
 
 def save_geo_state(gauge_score, article_count, headlines, updated_at, reason=None):
@@ -441,10 +434,8 @@ def get_geo_state() -> dict | None:
         return None
     keys = row.keys()
     return {
-        "gauge_score": row["gauge_score"],
-        "article_count": row["article_count"],
-        "headlines": json.loads(row["headlines_json"]),
-        "updated_at": row["updated_at"],
+        "gauge_score": row["gauge_score"], "article_count": row["article_count"],
+        "headlines": json.loads(row["headlines_json"]), "updated_at": row["updated_at"],
         "reason": row["reason"] if "reason" in keys else None,
     }
 
@@ -470,9 +461,7 @@ def get_rate_tone_state() -> dict | None:
     conn = get_conn()
     row = conn.execute("SELECT * FROM rate_tone_state WHERE id = 1").fetchone()
     conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    return dict(row) if row else None
 
 
 def save_live_trade_state(position, entry_price, stop_price, favorable_bricks, last_closed_direction, updated_at):
@@ -496,9 +485,7 @@ def get_live_trade_state() -> dict | None:
     conn = get_conn()
     row = conn.execute("SELECT * FROM live_trade_state WHERE id = 1").fetchone()
     conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    return dict(row) if row else None
 
 
 def add_live_trade_event(event_type, direction, price, event_time, brick_seq, reason, created_at):
@@ -516,6 +503,29 @@ def get_live_trade_events(limit: int = 200) -> list[dict]:
     conn = get_conn()
     rows = conn.execute(
         "SELECT * FROM live_trade_events ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
+def add_live_execution_event(event_type, direction, signal_price, real_price, slippage_pips, executed_at, error=None):
+    """Records a REAL order attempt (separate from the theoretical
+    live_trade_events) -- lets the theoretical signal price be compared
+    directly against what actually got executed, including any failures."""
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO live_execution_events (event_type, direction, signal_price, real_price, slippage_pips, executed_at, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (event_type, direction, signal_price, real_price, slippage_pips, executed_at, error),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_live_execution_events(limit: int = 200) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM live_execution_events ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
     conn.close()
     return [dict(r) for r in reversed(rows)]

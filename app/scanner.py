@@ -3,22 +3,17 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client, rate_tone_client, live_trader, freenews_client
+from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client, rate_tone_client, live_trader, freenews_client, live_execution
 from .renko import RenkoState, process_candle
 
 logger = logging.getLogger("007-terminal")
 
 BOX_SIZE = float(os.environ.get("BOX_SIZE", "0.0022"))
 
-# Prevents overlapping scans -- e.g. a cold-start wake-up triggering both the
-# startup task and the /api/cron/scan endpoint's own scan nearly
-# simultaneously, which could otherwise double-process the same candles and
-# send duplicate email alerts for the same brick.
 _scan_lock = threading.Lock()
 
 
 def _parse_time(t: str) -> datetime:
-    # OANDA times look like "2026-07-19T14:30:00.000000000Z"
     return datetime.strptime(t[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
 
 
@@ -33,8 +28,6 @@ def run_scan() -> dict:
 
 
 def _gauge_verdict(score, threshold=0.15):
-    """-1/0/1 for bearish/neutral/bullish, matching the same thresholds
-    used on the dashboard so email confluence matches what you'd see there."""
     if score is None:
         return 0
     if score > threshold:
@@ -45,9 +38,6 @@ def _gauge_verdict(score, threshold=0.15):
 
 
 def get_gauge_verdicts() -> list[tuple[str, int]]:
-    """Returns [(gauge_name, verdict)] for every gauge that currently has
-    data, verdict in {-1, 0, 1}. Only includes gauges with real data --
-    a gauge that's never successfully fetched isn't counted either way."""
     verdicts = []
 
     yield_state = db.get_yield_state()
@@ -90,13 +80,12 @@ def _run_scan_locked() -> dict:
     since_dt = _parse_time(last_candle_time) if last_candle_time else None
     candles = oanda_client.fetch_candles(since=since_dt, count=500, granularity="M15")
 
-    # Guard against re-processing the boundary candle we already handled
     if last_candle_time:
         candles = [c for c in candles if c["time"] > last_candle_time]
 
     logger.info(f"Fetched {len(candles)} new candles")
 
-    candle_groups = []  # (candle, [brick, ...]) per candle, in order
+    candle_groups = []
     all_new_bricks = []
     for candle in candles:
         new_bricks = process_candle(state, candle)
@@ -124,6 +113,9 @@ def _run_scan_locked() -> dict:
     # Re-associate each brick with the seq it was actually assigned, grouped
     # back by candle, then run the live majority-override trade simulation
     # (reuses the exact validated backtest logic -- see live_trader.py).
+    # The returned events are then handed to live_execution, which schedules
+    # the REAL order 3 minutes later at whatever the live price is by then --
+    # modeling realistic reaction time rather than an idealized instant fill.
     if candle_groups:
         seq_iter = iter(seqs)
         candle_brick_seq_groups = [
@@ -131,7 +123,8 @@ def _run_scan_locked() -> dict:
             for candle, bricks in candle_groups
         ]
         try:
-            live_trader.process_scan(candle_brick_seq_groups, BOX_SIZE)
+            events = live_trader.process_scan(candle_brick_seq_groups, BOX_SIZE)
+            live_execution.schedule_delayed_execution(events)
         except Exception as e:
             logger.error(f"Live trade simulation failed: {e}")
 
@@ -167,8 +160,6 @@ def run_news_refresh() -> dict:
     gbp_headlines, usd_headlines = headlines["gbp"], headlines["usd"]
     now = datetime.now(timezone.utc).isoformat()
 
-    # Neutral fallback if the LLM call fails -- no naive sentiment average
-    # available from this source (unlike the old Marketaux path).
     gbp_score, usd_score = 0.0, 0.0
     gbp_reason, usd_reason = None, None
     try:
@@ -181,11 +172,6 @@ def run_news_refresh() -> dict:
 
     raw_gauge_score = round((gbp_score - usd_score) / 2, 4)
 
-    # Smooth against the previous reading (50/50 blend) -- an hourly refresh
-    # with a small, shifting headline sample was flickering between quite
-    # different readings hour to hour. This keeps it responsive to a
-    # genuine multi-hour shift in tone while damping single-refresh noise
-    # from whichever headlines happened to be in the window this time.
     previous = db.get_news_state()
     if previous and previous.get("score") is not None:
         gauge_score = round(0.5 * raw_gauge_score + 0.5 * previous["score"], 4)
@@ -215,15 +201,10 @@ def run_cot_refresh() -> dict:
 
 
 def run_momentum_refresh() -> dict:
-    """Fetches the raw NFP/CPI figures, then has Claude judge their GBPUSD
-    tone with genuine reasoning -- same LLM-driven pattern as rate-tone/geo/
-    news, instead of a purely mechanical threshold score. Falls back to the
-    mechanical score only if the LLM call fails, matching the pattern used
-    everywhere else."""
     raw = fred_client.fetch_data_momentum()
     now = datetime.now(timezone.utc).isoformat()
 
-    gauge_score = raw["gauge_score"]  # mechanical fallback
+    gauge_score = raw["gauge_score"]
     reason = None
     try:
         llm_result = llm_client.interpret_momentum_data(
@@ -248,9 +229,7 @@ def run_geo_refresh() -> dict:
     headlines = freenews_client.fetch_geopolitical_headlines()
     now = datetime.now(timezone.utc).isoformat()
 
-    score = 0.0  # neutral fallback -- no naive sentiment average available
-    # from this source (unlike the old Marketaux path), so if the LLM call
-    # fails, we fall back to neutral rather than a stale/wrong reading.
+    score = 0.0
     reason = None
     try:
         llm_result = llm_client.interpret_geopolitical_headlines(headlines)
@@ -266,19 +245,6 @@ def run_geo_refresh() -> dict:
 
 
 def run_rate_tone_refresh(force: bool = False) -> dict:
-    """
-    Checks for a FOMC/BoE decision in the last few days; if there's one we
-    haven't processed yet, fetches the actual statement and has Claude judge
-    hawkish/dovish tone. Dormant most of the time by design -- rate
-    decisions are rare, so this just leaves the last known reading in place
-    between meetings rather than needing constant refreshing.
-
-    force=True (used by the manual refresh-now endpoint) bypasses the
-    "already processed this meeting" dedup check -- needed so a manual
-    refresh can actually re-fetch and correct a bad prior read (e.g. after
-    fixing an extraction bug), rather than the dedup logic silently
-    preserving the old bad result forever.
-    """
     today = datetime.now(timezone.utc).date()
     found = rate_tone_client.find_most_recent_decision(today)
     if found is None:
@@ -292,8 +258,6 @@ def run_rate_tone_refresh(force: bool = False) -> dict:
     statement_text = rate_tone_client.fetch_statement_text(bank, meeting_date)
     result = rate_tone_client.interpret_rate_statement(bank, statement_text)
 
-    # Fed hawkish -> USD strength -> GBPUSD bearish (inverted).
-    # BoE hawkish -> GBP strength -> GBPUSD bullish (direct).
     gauge_score = -result["score"] if bank == "Fed" else result["score"]
 
     now = datetime.now(timezone.utc).isoformat()

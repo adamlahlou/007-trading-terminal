@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
 from datetime import datetime, timedelta, timezone
-from . import db, oanda_client, calendar_schedule, backtest
+from . import db, oanda_client, calendar_schedule, backtest, oanda_execution, scheduler_registry
 from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_rate_tone_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
@@ -21,37 +21,21 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    # Every 15 minutes
+    # Register the scheduler so scanner.py -> live_execution.py can schedule
+    # the delayed (3-min) real order execution without a circular import.
+    scheduler_registry.set_scheduler(scheduler)
+    logger.info(f"Live execution enabled: {oanda_execution.LIVE_EXECUTION_ENABLED} (risk {oanda_execution.RISK_PCT_PER_TRADE}% per trade)")
+
     scheduler.add_job(lambda: asyncio.to_thread(run_scan), "cron", minute="0,15,30,45", id="fifteen_min_scan")
-    # Calendar doesn't change minute to minute -- refresh every 6 hours
     scheduler.add_job(lambda: asyncio.to_thread(run_calendar_refresh), "cron", hour="*/6", id="calendar_refresh")
-    # Yields move slowly (UK series is monthly) -- once a day is plenty
     scheduler.add_job(lambda: asyncio.to_thread(run_yield_refresh), "cron", hour="6", id="yield_refresh")
-    # Hourly -- only 48 calls/day (2 per refresh), well within Marketaux's free
-    # 100/day, and now the only thing still using that quota since geo moved off it
     scheduler.add_job(lambda: asyncio.to_thread(run_news_refresh), "cron", hour="*", id="news_refresh")
-    # COT only updates weekly (Fridays) -- once a day easily catches it
     scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", hour="7", id="cot_refresh")
-    # CFTC releases COT data every Friday at 3:30pm ET -- schedule a precise
-    # check shortly after, rather than waiting for the next daily 7am check.
-    # NOTE: 19:45 UTC assumes EDT (UTC-4, summer); during EST (UTC-5, winter)
-    # this would need to shift to 20:45 UTC -- not auto-adjusted for DST.
     scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", day_of_week="fri", hour="19", minute="45", id="cot_refresh_friday")
-    # NFP/CPI only update monthly -- once a day easily catches it (kept as
-    # a safety net; the precise NFP scheduling below is what actually
-    # catches same-day releases -- this daily check alone was always
-    # running BEFORE NFP's real ~12:30-13:30 UTC release time)
     scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
-    # Geopolitical risk can move fast -- check more often than the GBP/USD news gauge
     scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*", id="geo_refresh")
-    # Rate decisions are rare -- checking every 4h easily catches one within a day of it happening
     scheduler.add_job(lambda: asyncio.to_thread(run_rate_tone_refresh), "cron", hour="*/4", id="rate_tone_refresh")
 
-    # Precise scheduling: these release times are publicly known in advance,
-    # so schedule an exact check ~20 min after each one instead of relying
-    # only on the daily/4h polls above (which are kept as safety nets in
-    # case a precise job doesn't fire for some reason, e.g. a redeploy at
-    # the wrong moment).
     now_utc = datetime.now(timezone.utc)
     for bank, decision_dt in calendar_schedule.get_rate_decision_datetimes():
         check_dt = decision_dt + timedelta(minutes=20)
@@ -63,10 +47,6 @@ async def lifespan(app: FastAPI):
                 id=f"rate_tone_precise_{bank}_{decision_dt.date()}",
             )
 
-    # Same pattern for NFP -- always the first Friday of the month at a
-    # known time, so schedule an exact check ~20 min after each one for
-    # the next 12 months, rather than only the daily 8am poll which was
-    # structurally always too early to catch a same-day release.
     nfp_start = now_utc.date()
     nfp_end = (now_utc + timedelta(days=365)).date()
     for nfp_dt in calendar_schedule.get_nfp_datetimes(nfp_start, nfp_end):
@@ -177,7 +157,6 @@ async def scan_now():
 
 @app.get("/api/cron/scan")
 async def cron_scan():
-    """GET endpoint for an external scheduler (e.g. cron-job.org) to hit every 30 min."""
     try:
         result = await asyncio.to_thread(run_scan)
         return JSONResponse({"ok": True, **result})
@@ -299,9 +278,6 @@ async def rate_tone_refresh_now():
 
 @app.post("/api/refresh-all")
 async def refresh_all():
-    """One button to refresh everything -- runs every gauge/data refresh
-    concurrently and reports which ones succeeded or failed, rather than
-    needing eight separate buttons scattered across the page."""
     jobs = {
         "scan": run_scan,
         "calendar": run_calendar_refresh,
@@ -329,36 +305,6 @@ async def refresh_all():
 
 @app.get("/api/backtest")
 async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None, debug_gauges: bool = False, gauge_set: str = "yield_cot_momentum"):
-    """On-demand only -- not scheduled. Fetches historical OANDA data and
-    simulates the Renko trade rules against it. Runs in a thread since it
-    does real (slow-ish) API calls and computation.
-    start_date/end_date (YYYY-MM-DD): test a SPECIFIC historical window
-    (e.g. a particular month) instead of the default rolling "last `days`
-    days from now" -- lets results from different periods be compared or
-    added together. Overrides `days` when both are given.
-    reversal_only=true tests the variant that only re-enters on a genuine
-    reversal brick, rather than any same-direction continuation brick.
-    continuation_override=majority|momentum_weighted (only meaningful with
-    reversal_only=true) allows a same-direction re-entry anyway if the
-    reconstructed yield/COT/momentum gauges support it at that point in time.
-    gate_all_entries=true requires gate_threshold+/3 gauge agreement for
-    EVERY entry, including genuine reversal bricks -- the strictest mode.
-    gate_threshold=1|2 -- how many of the 3 proven gauges (yield/COT/
-    momentum, never geopolitical) must agree, for both gate_all_entries and
-    continuation_override=majority. Defaults to 2.
-    trailing_mode=tight|breakeven_then_wide|gradual_lock|simple_22_33 --
-    tight (default) holds 2 bricks then trails 1 box; breakeven_then_wide
-    holds 2 bricks, moves to exact breakeven, then trails 2 boxes (44
-    pips) from there on; gradual_lock is breakeven_then_wide but adds an
-    earlier stage -- locks in 5 pips of real profit after just 1
-    favorable brick, instead of leaving the trade fully unprotected until
-    the 2-brick threshold; simple_22_33 trails 1 box (22 pips) from the
-    very first favorable brick with no hold period, widening to 1.5
-    boxes (33 pips) once 44+ pips profit is reached.
-    gauge_set=yield_cot_momentum (default, the originally validated set),
-    momentum_rate_tone, or news_geo_rate_tone -- the 3 fast, event-driven
-    gauges (real weekly-bucketed news/geo reconstruction + real rate-tone),
-    dropping yield/COT/momentum entirely."""
     try:
         result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges, gauge_set)
         return JSONResponse(result)
@@ -369,8 +315,42 @@ async def api_backtest(days: int = 45, reversal_only: bool = False, continuation
 
 @app.get("/api/live-trades")
 async def api_live_trades():
-    """Current live position state + recent entry/exit events, for the
+    """Current THEORETICAL position state + recent signal events, for the
     green/red dots on the chart and a status readout."""
     state = db.get_live_trade_state()
     events = db.get_live_trade_events(limit=200)
     return JSONResponse({"state": state, "events": events})
+
+
+@app.get("/api/live-execution")
+async def api_live_execution():
+    """Real order execution status -- whether live execution is actually
+    enabled, current REAL open position straight from OANDA (ground truth,
+    not our tracked state), and recent real order attempts including any
+    that failed, with slippage vs the theoretical signal price."""
+    try:
+        real_position = await asyncio.to_thread(oanda_execution.get_open_position)
+    except Exception as e:
+        real_position = {"error": str(e)}
+    events = db.get_live_execution_events(limit=100)
+    return JSONResponse({
+        "live_execution_enabled": oanda_execution.LIVE_EXECUTION_ENABLED,
+        "risk_pct_per_trade": oanda_execution.RISK_PCT_PER_TRADE,
+        "real_open_position": real_position,
+        "events": events,
+    })
+
+
+@app.post("/api/emergency-flatten")
+async def emergency_flatten():
+    """Manual kill switch -- immediately closes any real open position,
+    regardless of what our own tracked state thinks is happening. Use this
+    if something looks wrong and you want out immediately, not waiting for
+    the next scan or the 3-minute delay."""
+    try:
+        result = await asyncio.to_thread(oanda_execution.close_position)
+        logger.warning(f"EMERGENCY FLATTEN triggered manually: {result}")
+        return JSONResponse({"ok": True, "result": result})
+    except Exception as e:
+        logger.error(f"Emergency flatten failed: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
