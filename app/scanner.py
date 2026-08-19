@@ -110,12 +110,6 @@ def _run_scan_locked() -> dict:
     if brick_dicts:
         notifier.send_brick_notification(brick_dicts)
 
-    # Re-associate each brick with the seq it was actually assigned, grouped
-    # back by candle, then run the live majority-override trade simulation
-    # (reuses the exact validated backtest logic -- see live_trader.py).
-    # The returned events are then handed to live_execution, which schedules
-    # the REAL order 3 minutes later at whatever the live price is by then --
-    # modeling realistic reaction time rather than an idealized instant fill.
     if candle_groups:
         seq_iter = iter(seqs)
         candle_brick_seq_groups = [
@@ -264,3 +258,34 @@ def run_rate_tone_refresh(force: bool = False) -> dict:
     db.save_rate_tone_state(bank, meeting_date.isoformat(), result["score"], gauge_score, result["reason"], now)
     logger.info(f"Rate tone ({bank}, {meeting_date}): raw {result['score']}, gauge {gauge_score} -- {result['reason']}")
     return {"bank": bank, "meeting_date": meeting_date.isoformat(), "gauge_score": gauge_score, "reason": result["reason"]}
+
+
+def run_fomc_minutes_refresh(force: bool = False) -> dict:
+    """
+    Checks for FOMC Minutes released in the last few days (a genuinely
+    separate document from the brief statement, released 3 weeks after the
+    decision, going into far more depth including actual dissent counts).
+    Dormant most of the time by design -- same pattern as rate-tone.
+
+    force=True bypasses the "already processed" dedup, same as rate-tone.
+    """
+    today = datetime.now(timezone.utc).date()
+    meeting_date = rate_tone_client.find_most_recent_minutes(today)
+    if meeting_date is None:
+        return {"skipped": True, "reason": "no recent FOMC minutes release"}
+
+    existing = db.get_fomc_minutes_state()
+    if not force and existing and existing["meeting_date"] == meeting_date.isoformat():
+        return {"skipped": True, "reason": "already processed these minutes"}
+
+    minutes_text = rate_tone_client.fetch_minutes_text(meeting_date)
+    result = rate_tone_client.interpret_minutes_text(minutes_text)
+
+    # Fed hawkish -> USD strength -> GBPUSD bearish (inverted), same as the
+    # regular Fed statement -- Minutes are Fed-only, no BoE equivalent here.
+    gauge_score = -result["score"]
+
+    now = datetime.now(timezone.utc).isoformat()
+    db.save_fomc_minutes_state(meeting_date.isoformat(), result["score"], gauge_score, result["reason"], now)
+    logger.info(f"FOMC Minutes ({meeting_date}): raw {result['score']}, gauge {gauge_score} -- {result['reason']}")
+    return {"meeting_date": meeting_date.isoformat(), "gauge_score": gauge_score, "reason": result["reason"]}

@@ -6,9 +6,14 @@ sentiment score can't tell "we expect to raise rates in due course" apart
 from "we expect to raise rates soon", but that distinction is exactly what
 moves markets.
 
+Also fetches FOMC Minutes -- a genuinely separate, later-released document
+(3 weeks after the decision) that goes into far more depth than the brief
+statement, including actual dissent counts and vote splits.
+
 URL patterns verified directly against the Fed's and BoE's own sites:
-  Fed:  https://www.federalreserve.gov/newsevents/pressreleases/monetary{YYYYMMDD}a.htm
-  BoE:  https://www.bankofengland.co.uk/monetary-policy-summary-and-minutes/{year}/{month-name}-{year}
+  Fed statement: https://www.federalreserve.gov/newsevents/pressreleases/monetary{YYYYMMDD}a.htm
+  Fed minutes:   https://www.federalreserve.gov/monetarypolicy/fomcminutes{YYYYMMDD}.htm (meeting end date)
+  BoE:           https://www.bankofengland.co.uk/monetary-policy-summary-and-minutes/{year}/{month-name}-{year}
 """
 from __future__ import annotations
 import os
@@ -17,7 +22,7 @@ import json
 import requests
 from datetime import date
 
-from .calendar_schedule import FOMC_DATES_2026, BOE_MPC_DATES_2026
+from .calendar_schedule import FOMC_DATES_2026, BOE_MPC_DATES_2026, get_fomc_minutes_dates, get_fomc_minutes_release_datetimes
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -39,6 +44,10 @@ def _strip_html(html: str) -> str:
 
 def _fomc_url(d: date) -> str:
     return f"https://www.federalreserve.gov/newsevents/pressreleases/monetary{d.strftime('%Y%m%d')}a.htm"
+
+
+def _fomc_minutes_url(meeting_end_date: date) -> str:
+    return f"https://www.federalreserve.gov/monetarypolicy/fomcminutes{meeting_end_date.strftime('%Y%m%d')}.htm"
 
 
 def _boe_url(d: date) -> str:
@@ -63,30 +72,56 @@ def find_most_recent_decision(today: date, lookback_days: int = 3) -> tuple[str,
     return candidates[0]
 
 
+def find_most_recent_minutes(today: date, lookback_days: int = 3) -> date | None:
+    """Returns the meeting_end_date whose Minutes were released within the
+    last `lookback_days`, or None if nothing recent. Same lookback pattern
+    as find_most_recent_decision, just checking the computed RELEASE date
+    (meeting + 3 weeks), not the meeting date itself."""
+    candidates = []
+    for meeting_date, release_dt in get_fomc_minutes_release_datetimes():
+        release_date = release_dt.date()
+        if 0 <= (today - release_date).days <= lookback_days:
+            candidates.append((meeting_date, release_date))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c[1], reverse=True)
+    return candidates[0][0]
+
+
 def fetch_statement_text(bank: str, d: date) -> str:
     url = _fomc_url(d) if bank == "Fed" else _boe_url(d)
     resp = requests.get(url, headers={"User-Agent": "one-trading-terminal/1.0"}, timeout=20)
     resp.raise_for_status()
     text = _strip_html(resp.text)
 
-    # Fed pages have a lot of nav/boilerplate ("Official websites use .gov...
-    # Back to Home... Main Menu Toggle Button...") before the actual
-    # statement -- confirmed every real FOMC statement starts with this
-    # exact phrase, so anchor on it instead of blindly taking the first N
-    # characters (which was mostly nav junk, not the real content).
     marker_idx = text.lower().find("for release at")
     if marker_idx != -1:
         text = text[marker_idx:]
     else:
-        # Marker not found (e.g. BoE's page structure differs) -- nav/
-        # boilerplate is typically front-loaded on these gov sites, so
-        # keeping the LAST chunk is a safer bet than the first.
         text = text[-6000:]
 
-    # Statements are long (BoE minutes especially) -- the tone lives in the
-    # opening summary, not deep in procedural detail, so cap it generously
-    # but don't send the whole multi-thousand-word minutes document.
     return text[:6000]
+
+
+def fetch_minutes_text(meeting_end_date: date) -> str:
+    """Minutes are MUCH longer than the brief statement, and critically,
+    the most analytically important content (Participants' Views, the
+    actual vote count, named dissents) sits well past the opening --
+    confirmed directly against a real Minutes page. A 6000-char cap (fine
+    for the short statement) would cut off before ever reaching the vote/
+    dissent section, so this uses a far more generous limit."""
+    url = _fomc_minutes_url(meeting_end_date)
+    resp = requests.get(url, headers={"User-Agent": "one-trading-terminal/1.0"}, timeout=20)
+    resp.raise_for_status()
+    text = _strip_html(resp.text)
+
+    marker_idx = text.lower().find("a joint meeting of the federal open market committee")
+    if marker_idx != -1:
+        text = text[marker_idx:]
+    else:
+        text = text[-28000:]
+
+    return text[:28000]
 
 
 def interpret_rate_statement(bank: str, statement_text: str) -> dict:
@@ -127,4 +162,55 @@ Respond with ONLY a JSON object, no other text:
 
     score = max(-1.0, min(1.0, float(parsed["score"])))
     reason = str(parsed.get("reason", "")).strip()[:300]
+    return {"score": round(score, 3), "reason": reason}
+
+
+def interpret_minutes_text(minutes_text: str) -> dict:
+    """Same hawkish/dovish scoring as interpret_rate_statement, but tuned
+    for Minutes specifically -- explicitly told about the Fed's own
+    quantifier convention ('a couple'/'a few' < 'some' < 'several' <
+    'many' < 'most' < 'almost all', and 'participants' vs 'members') since
+    that's exactly the kind of nuance real analysts read Minutes for, and
+    told to weight the actual vote count/named dissents heavily -- that's
+    concrete, not just tone."""
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+
+    prompt = f"""You are reading the official FOMC Minutes (the detailed account of a Federal Reserve meeting, released 3 weeks after the decision) to judge its tone for currency trading purposes, specifically for USD.
+
+Judge whether the Minutes are HAWKISH (leaning toward higher rates / tighter policy -- bullish for USD) or DOVISH (leaning toward lower rates / looser policy -- bearish for USD).
+
+Important context for reading FOMC Minutes specifically:
+- The Fed uses a deliberate quantifier ladder to convey how widely a view was held, from least to most participants: "a couple" / "a few" < "some" < "several" < "many" < "most" < "almost all". Weight views described with stronger quantifiers more heavily.
+- "Participants" means everyone at the table (including non-voting regional presidents); "members" means only the twelve who actually vote -- a view held by "members" is more directly actionable than one merely held by "participants".
+- The ACTUAL vote count and any NAMED DISSENTS (e.g. "Voting against this action: X, Y, Z") are concrete, high-weight signals -- weight these more heavily than general tone language elsewhere in the document.
+- Minutes are backward-looking (describing a meeting that already happened) -- if the actual policy decision was already known, focus on what's genuinely NEW here: how close the vote was, what the internal debate revealed about the committee's likely NEXT move, not just restating the known decision.
+
+Minutes text:
+{minutes_text}
+
+Respond with ONLY a JSON object, no other text:
+{{"score": <float -1.0 to 1.0, negative = dovish, positive = hawkish>, "reason": "<one short plain-English sentence on the tone, the vote/dissent detail if notable, and what it implies for the next meeting>"}}"""
+
+    resp = requests.post(
+        API_URL,
+        headers={
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={"model": MODEL, "max_tokens": 300, "messages": [{"role": "user", "content": prompt}]},
+        timeout=40,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    text = data["content"][0]["text"].strip()
+
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise RuntimeError(f"Could not parse JSON from Claude's response: {text[:200]}")
+    parsed = json.loads(match.group(0))
+
+    score = max(-1.0, min(1.0, float(parsed["score"])))
+    reason = str(parsed.get("reason", "")).strip()[:400]
     return {"score": round(score, 3), "reason": reason}

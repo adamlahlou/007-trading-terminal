@@ -8,6 +8,8 @@ Covers:
   - FOMC interest rate decisions (Federal Reserve, published ~1yr ahead)
   - BoE MPC interest rate decisions (Bank of England, published ~1yr ahead)
   - US Non-Farm Payrolls (computed -- always the first Friday of the month)
+  - FOMC Minutes (computed -- always 3 weeks after the meeting, per the
+    Fed's own published schedule)
 
 Does NOT include forecast/consensus or actual/prior figures -- that's the
 part vendors charge for. This gives you reliable event timing + impact only.
@@ -99,7 +101,6 @@ def _nfp_occurrences(start: date, end: date) -> list[dict]:
                     "prev": None,
                 }
             )
-        # advance to next month
         if d.month == 12:
             d = date(d.year + 1, 1, 1)
         else:
@@ -122,15 +123,7 @@ def get_rate_decision_datetimes() -> list[tuple[str, datetime]]:
 
 
 def get_nfp_datetimes(start: date, end: date) -> list[datetime]:
-    """Returns actual UTC datetimes for every NFP release in [start, end] --
-    used to schedule a precise check shortly after each one instead of
-    relying only on a daily poll (which was running at 8am UTC, always
-    BEFORE NFP's actual ~12:30-13:30 UTC release time, so it correctly
-    found nothing new on release day and then waited a full 24h to check
-    again -- meaning the momentum gauge was always at least a day stale
-    for NFP specifically. Same fix pattern as the COT-Friday and rate-
-    decision precise scheduling: known release time, schedule an exact
-    check right after it, on top of the existing daily safety-net poll."""
+    """Returns actual UTC datetimes for every NFP release in [start, end]."""
     results = []
     d = date(start.year, start.month, 1)
     while d <= end:
@@ -142,6 +135,29 @@ def get_nfp_datetimes(start: date, end: date) -> list[datetime]:
             d = date(d.year + 1, 1, 1)
         else:
             d = date(d.year, d.month + 1, 1)
+    return results
+
+
+def get_fomc_minutes_dates() -> list[date]:
+    """Returns [meeting_end_date] for every FOMC meeting -- the Minutes URL
+    uses the MEETING's end date, not the release date, even though the
+    Minutes are actually published 3 weeks later. Confirmed directly from
+    the Fed's own site: minutes of the regularly scheduled meetings are
+    released exactly 3 weeks after the day of the policy decision."""
+    return [d for d, _ in FOMC_DATES_2026]
+
+
+def get_fomc_minutes_release_datetimes() -> list[tuple[date, datetime]]:
+    """Returns [(meeting_end_date, release_utc_datetime)] -- the ACTUAL
+    release moment (meeting date + 21 days, 2:00pm ET), used for precise
+    scheduling. NOTE: 2pm ET = 18:00 UTC assumes EDT (summer, UTC-4); during
+    EST (winter, UTC-5) this would need to shift to 19:00 UTC -- not
+    auto-adjusted for DST, same caveat as the existing COT Friday scheduling."""
+    results = []
+    for meeting_date in get_fomc_minutes_dates():
+        release_date = meeting_date + timedelta(days=21)
+        release_dt = datetime(release_date.year, release_date.month, release_date.day, 18, 0, tzinfo=timezone.utc)
+        results.append((meeting_date, release_dt))
     return results
 
 
@@ -176,6 +192,21 @@ def fetch_calendar(days_ahead: int = 30, days_behind: int = 1) -> list[dict]:
                     "time": _uk_local_to_utc_iso(d, hhmm),
                     "country": "GB",
                     "event": "BoE Interest Rate Decision (MPC)",
+                    "impact": "high",
+                    "actual": None,
+                    "estimate": None,
+                    "prev": None,
+                }
+            )
+
+    for meeting_date, release_dt in get_fomc_minutes_release_datetimes():
+        release_date = release_dt.date()
+        if start <= release_date <= end:
+            events.append(
+                {
+                    "time": release_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "country": "US",
+                    "event": "FOMC Minutes",
                     "impact": "high",
                     "actual": None,
                     "estimate": None,

@@ -145,6 +145,21 @@ def init_db():
         )
         """
     )
+    # NEW: FOMC Minutes -- genuinely separate document/signal from the
+    # brief statement (released 3 weeks later), tracked separately so
+    # neither overwrites the other.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fomc_minutes_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            meeting_date TEXT NOT NULL,
+            raw_score REAL NOT NULL,
+            gauge_score REAL NOT NULL,
+            reason TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS live_trade_state (
@@ -172,9 +187,6 @@ def init_db():
         )
         """
     )
-    # NEW: real order execution log, separate from the theoretical
-    # live_trade_events -- lets the signal price be compared directly
-    # against what actually got executed (including failures).
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS live_execution_events (
@@ -464,6 +476,33 @@ def get_rate_tone_state() -> dict | None:
     return dict(row) if row else None
 
 
+def save_fomc_minutes_state(meeting_date, raw_score, gauge_score, reason, updated_at):
+    """Fed-only (Minutes are a Fed-specific document, no BoE equivalent
+    tracked here) -- always inverted the same way as the regular Fed
+    statement (hawkish Fed -> USD strength -> GBPUSD bearish)."""
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO fomc_minutes_state (id, meeting_date, raw_score, gauge_score, reason, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            meeting_date=excluded.meeting_date, raw_score=excluded.raw_score,
+            gauge_score=excluded.gauge_score, reason=excluded.reason,
+            updated_at=excluded.updated_at
+        """,
+        (meeting_date, raw_score, gauge_score, reason, updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_fomc_minutes_state() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM fomc_minutes_state WHERE id = 1").fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def save_live_trade_state(position, entry_price, stop_price, favorable_bricks, last_closed_direction, updated_at):
     conn = get_conn()
     conn.execute(
@@ -509,9 +548,6 @@ def get_live_trade_events(limit: int = 200) -> list[dict]:
 
 
 def add_live_execution_event(event_type, direction, signal_price, real_price, slippage_pips, executed_at, error=None):
-    """Records a REAL order attempt (separate from the theoretical
-    live_trade_events) -- lets the theoretical signal price be compared
-    directly against what actually got executed, including any failures."""
     conn = get_conn()
     conn.execute(
         """INSERT INTO live_execution_events (event_type, direction, signal_price, real_price, slippage_pips, executed_at, error)

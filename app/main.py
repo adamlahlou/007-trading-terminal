@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 
 from datetime import datetime, timedelta, timezone
 from . import db, oanda_client, calendar_schedule, backtest, oanda_execution, scheduler_registry
-from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_rate_tone_refresh, BOX_SIZE
+from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_rate_tone_refresh, run_fomc_minutes_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("007-terminal")
@@ -21,8 +21,6 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    # Register the scheduler so scanner.py -> live_execution.py can schedule
-    # the delayed (3-min) real order execution without a circular import.
     scheduler_registry.set_scheduler(scheduler)
     logger.info(f"Live execution enabled: {oanda_execution.LIVE_EXECUTION_ENABLED} (risk {oanda_execution.RISK_PCT_PER_TRADE}% per trade)")
 
@@ -35,6 +33,9 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
     scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*", id="geo_refresh")
     scheduler.add_job(lambda: asyncio.to_thread(run_rate_tone_refresh), "cron", hour="*/4", id="rate_tone_refresh")
+    # FOMC Minutes: rare (8x/year), so a daily safety-net check plus precise
+    # scheduling below (same pattern as everything else) is more than enough.
+    scheduler.add_job(lambda: asyncio.to_thread(run_fomc_minutes_refresh), "cron", hour="15", id="fomc_minutes_refresh")
 
     now_utc = datetime.now(timezone.utc)
     for bank, decision_dt in calendar_schedule.get_rate_decision_datetimes():
@@ -57,6 +58,19 @@ async def lifespan(app: FastAPI):
                 "date",
                 run_date=check_dt,
                 id=f"nfp_precise_{nfp_dt.date()}",
+            )
+
+    # FOMC Minutes precise scheduling -- known release time (meeting + 3
+    # weeks, 2pm ET), so schedule an exact check ~20 min after each one for
+    # every meeting on the books, rather than relying only on the daily poll.
+    for meeting_date, release_dt in calendar_schedule.get_fomc_minutes_release_datetimes():
+        check_dt = release_dt + timedelta(minutes=20)
+        if check_dt > now_utc:
+            scheduler.add_job(
+                lambda: asyncio.to_thread(run_fomc_minutes_refresh),
+                "date",
+                run_date=check_dt,
+                id=f"fomc_minutes_precise_{meeting_date}",
             )
 
     scheduler.start()
@@ -109,6 +123,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Startup rate tone refresh failed: {e}")
 
+    async def _startup_fomc_minutes():
+        try:
+            await asyncio.to_thread(run_fomc_minutes_refresh)
+        except Exception as e:
+            logger.error(f"Startup FOMC minutes refresh failed: {e}")
+
     asyncio.create_task(_startup_scan())
     asyncio.create_task(_startup_calendar())
     asyncio.create_task(_startup_yields())
@@ -117,6 +137,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_startup_momentum())
     asyncio.create_task(_startup_geo())
     asyncio.create_task(_startup_rate_tone())
+    asyncio.create_task(_startup_fomc_minutes())
     yield
     scheduler.shutdown()
 
@@ -276,6 +297,24 @@ async def rate_tone_refresh_now():
         return JSONResponse({"error": str(e)}, status_code=502)
 
 
+@app.get("/api/fomc-minutes")
+async def api_fomc_minutes():
+    """FOMC Minutes -- a separate, later-released document from the brief
+    statement, tracked independently (not merged into /api/rate-tone)."""
+    state = db.get_fomc_minutes_state()
+    return JSONResponse(state or {})
+
+
+@app.post("/api/fomc-minutes-refresh-now")
+async def fomc_minutes_refresh_now():
+    try:
+        result = await asyncio.to_thread(run_fomc_minutes_refresh, True)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"FOMC minutes refresh failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
 @app.post("/api/refresh-all")
 async def refresh_all():
     jobs = {
@@ -287,6 +326,7 @@ async def refresh_all():
         "momentum": run_momentum_refresh,
         "geo": run_geo_refresh,
         "rate_tone": lambda: run_rate_tone_refresh(force=True),
+        "fomc_minutes": lambda: run_fomc_minutes_refresh(force=True),
     }
 
     async def _run(name, fn):
@@ -315,8 +355,6 @@ async def api_backtest(days: int = 45, reversal_only: bool = False, continuation
 
 @app.get("/api/live-trades")
 async def api_live_trades():
-    """Current THEORETICAL position state + recent signal events, for the
-    green/red dots on the chart and a status readout."""
     state = db.get_live_trade_state()
     events = db.get_live_trade_events(limit=200)
     return JSONResponse({"state": state, "events": events})
@@ -324,10 +362,6 @@ async def api_live_trades():
 
 @app.get("/api/live-execution")
 async def api_live_execution():
-    """Real order execution status -- whether live execution is actually
-    enabled, current REAL open position straight from OANDA (ground truth,
-    not our tracked state), and recent real order attempts including any
-    that failed, with slippage vs the theoretical signal price."""
     try:
         real_position = await asyncio.to_thread(oanda_execution.get_open_position)
     except Exception as e:
@@ -343,10 +377,6 @@ async def api_live_execution():
 
 @app.post("/api/emergency-flatten")
 async def emergency_flatten():
-    """Manual kill switch -- immediately closes any real open position,
-    regardless of what our own tracked state thinks is happening. Use this
-    if something looks wrong and you want out immediately, not waiting for
-    the next scan or the 3-minute delay."""
     try:
         result = await asyncio.to_thread(oanda_execution.close_position)
         logger.warning(f"EMERGENCY FLATTEN triggered manually: {result}")
