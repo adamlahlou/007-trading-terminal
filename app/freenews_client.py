@@ -1,7 +1,12 @@
 """
 Fetches genuine world/geopolitical AND finance news via FreeNewsApi.io --
 verified before building: 5,000 free requests/day, 71 countries, confirmed
-category list includes finance/business/economy/personal-finance.
+category list includes finance/business/economy/personal-finance. ALSO
+confirmed (the hard way, after a 17-day silent outage): a 2 requests/second
+rate limit -- fetch_gbp_usd_headlines loops over 5 topics with no delay
+between them, which reliably bursts past that limit and fails the entire
+refresh every single time it runs, not just occasionally. Fixed with a
+small sleep between each topic's request.
 
 Used for BOTH the geopolitical gauge (topic=world) and the GBP/USD news
 gauge (topic=finance, GBP/USD classification done in our own code below
@@ -15,11 +20,18 @@ relies entirely on the LLM interpretation step in llm_client.py.
 """
 from __future__ import annotations
 import os
+import time
 import requests
 from datetime import datetime, timezone, timedelta
 
 FREENEWS_API_KEY = os.environ.get("FREENEWS_API_KEY")
 BASE_URL = "https://api.freenewsapi.io/v1/news"
+
+# Confirmed directly from freenewsapi.io: "a 2 requests/second rate limit".
+# 0.6s gives a comfortable margin under that (well under 2/sec) rather than
+# cutting it exactly to the limit, which real-world timing jitter could
+# still trip.
+REQUEST_DELAY_SECONDS = 0.6
 
 GBP_KEYWORDS = ["gbp", "pound", "sterling", "bank of england", " boe ", "uk economy", "britain", "british"]
 USD_KEYWORDS = ["usd", "dollar", "federal reserve", " fed ", "non-farm", "nonfarm", "nfp", "fomc", "us economy", "us inflation"]
@@ -100,9 +112,14 @@ def fetch_gbp_usd_headlines(lookback_hours: int = 48) -> dict:
     search-string query) so there's no ambiguity about how the
     classification works. politics/world added after finding
     finance/business/economy alone matched almost nothing historically --
-    real central bank/currency-moving news often gets tagged there instead."""
+    real central bank/currency-moving news often gets tagged there instead.
+    Delays between each topic's request to stay under the confirmed 2
+    requests/second limit -- without this, 5 topics fired back-to-back
+    reliably burst past it and failed the ENTIRE refresh every time."""
     all_articles = []
-    for topic in NEWS_TOPICS:
+    for i, topic in enumerate(NEWS_TOPICS):
+        if i > 0:
+            time.sleep(REQUEST_DELAY_SECONDS)
         all_articles.extend(_fetch_headlines(topic, limit=25, lookback_hours=lookback_hours))
     return _classify_gbp_usd(all_articles)
 
@@ -114,8 +131,11 @@ def fetch_geopolitical_headlines_range(published_after: str, published_before: s
 
 
 def fetch_gbp_usd_headlines_range(published_after: str, published_before: str) -> dict:
-    """Historical version of fetch_gbp_usd_headlines -- explicit date range."""
+    """Historical version of fetch_gbp_usd_headlines -- explicit date range.
+    Same rate-limit-safe delay between topics as the live version."""
     all_articles = []
-    for topic in NEWS_TOPICS:
+    for i, topic in enumerate(NEWS_TOPICS):
+        if i > 0:
+            time.sleep(REQUEST_DELAY_SECONDS)
         all_articles.extend(_fetch_headlines_range(topic, limit=25, published_after=published_after, published_before=published_before))
     return _classify_gbp_usd(all_articles)
