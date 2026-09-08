@@ -384,3 +384,12 @@ async def emergency_flatten():
     except Exception as e:
         logger.error(f"Emergency flatten failed: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+
+
+@app.get("/api/gauge-history")
+async def api_gauge_history(gauge: str = None, limit: int = 1000):
+    """Real history of gauge readings over time -- foundation for finding
+    genuine correlations between what the gauges said and what price/
+    trades actually did afterward. gauge=geo (etc.) filters to one gauge;
+    omit for every gauge's history together."""
+    return JSONResponse({"history": db.get_gauge_history(gauge_name=gauge, limit=limit)})

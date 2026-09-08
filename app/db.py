@@ -145,9 +145,6 @@ def init_db():
         )
         """
     )
-    # NEW: FOMC Minutes -- genuinely separate document/signal from the
-    # brief statement (released 3 weeks later), tracked separately so
-    # neither overwrites the other.
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS fomc_minutes_state (
@@ -198,6 +195,22 @@ def init_db():
             slippage_pips REAL,
             executed_at TEXT NOT NULL,
             error TEXT
+        )
+        """
+    )
+    # NEW: gauge history -- unlike the single-row state tables above (which
+    # overwrite on every refresh), this is INSERT-only, building a real
+    # time series. Cheap (one small write per refresh, no new API/LLM
+    # calls) and the foundation for eventually finding genuine correlations
+    # between gauge readings and what price/trades actually did afterward.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gauge_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            gauge_name TEXT NOT NULL,
+            score REAL,
+            recorded_at TEXT NOT NULL,
+            detail TEXT
         )
         """
     )
@@ -477,9 +490,6 @@ def get_rate_tone_state() -> dict | None:
 
 
 def save_fomc_minutes_state(meeting_date, raw_score, gauge_score, reason, updated_at):
-    """Fed-only (Minutes are a Fed-specific document, no BoE equivalent
-    tracked here) -- always inverted the same way as the regular Fed
-    statement (hawkish Fed -> USD strength -> GBPUSD bearish)."""
     conn = get_conn()
     conn.execute(
         """
@@ -563,5 +573,39 @@ def get_live_execution_events(limit: int = 200) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM live_execution_events ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
+    conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
+def log_gauge_reading(gauge_name: str, score: float | None, recorded_at: str, detail: str | None = None):
+    """Appends one reading -- unlike the single-row gauge state tables
+    above (which overwrite on every refresh), this is INSERT-only,
+    building real history over time. Cheap: one small write per refresh,
+    no new API/LLM calls. Foundation for eventually finding genuine
+    correlations between gauge readings and what price/trades actually
+    did afterward."""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO gauge_history (gauge_name, score, recorded_at, detail) VALUES (?, ?, ?, ?)",
+        (gauge_name, score, recorded_at, detail),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_gauge_history(gauge_name: str | None = None, limit: int = 1000) -> list[dict]:
+    """Returns readings oldest-first (natural order for time-series/
+    correlation analysis). gauge_name=None returns every gauge's history
+    together, ordered by time -- gauge_name='geo' etc. filters to one."""
+    conn = get_conn()
+    if gauge_name:
+        rows = conn.execute(
+            "SELECT * FROM gauge_history WHERE gauge_name = ? ORDER BY id DESC LIMIT ?",
+            (gauge_name, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM gauge_history ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
     conn.close()
     return [dict(r) for r in reversed(rows)]

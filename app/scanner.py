@@ -145,6 +145,7 @@ def run_yield_refresh() -> dict:
         result["uk_yield"], result["uk_date"],
         result["spread"], now,
     )
+    db.log_gauge_reading("yield", result["spread"], now)
     logger.info(f"Yield refresh: US {result['us_yield']}%, UK {result['uk_yield']}%, spread {result['spread']}")
     return result
 
@@ -179,6 +180,7 @@ def run_news_refresh() -> dict:
     article_count = len(gbp_headlines) + len(usd_headlines)
 
     db.save_news_state(gauge_score, article_count, all_headlines, now, gbp_score=gbp_score, usd_score=usd_score)
+    db.log_gauge_reading("news", gauge_score, now)
     logger.info(f"News refresh: gauge {gauge_score} (raw {raw_gauge_score}, GBP {gbp_score}: {gbp_reason} | USD {usd_score}: {usd_reason}) across {article_count} matched articles")
     return {"gauge_score": gauge_score, "article_count": article_count, "headlines": all_headlines, "gbp_score": gbp_score, "usd_score": usd_score}
 
@@ -190,6 +192,7 @@ def run_cot_refresh() -> dict:
         result["report_date"], result["lev_long"], result["lev_short"],
         result["lev_net"], result["prior_net"], result["gauge_score"], now,
     )
+    db.log_gauge_reading("cot", result["gauge_score"], now)
     logger.info(f"COT refresh: report {result['report_date']}, lev net {result['lev_net']}, gauge {result['gauge_score']}")
     return result
 
@@ -215,6 +218,7 @@ def run_momentum_refresh() -> dict:
         raw["nfp_change"], raw["nfp_date"],
         gauge_score, now, reason=reason,
     )
+    db.log_gauge_reading("momentum", gauge_score, now, detail=reason)
     logger.info(f"Momentum refresh: CPI YoY {raw['cpi_yoy']}%, NFP change {raw['nfp_change']}k, gauge {gauge_score}")
     return {**raw, "gauge_score": gauge_score, "reason": reason}
 
@@ -234,6 +238,7 @@ def run_geo_refresh() -> dict:
         logger.warning(f"LLM geopolitical interpretation failed, falling back to neutral: {e}")
 
     db.save_geo_state(score, len(headlines), headlines, now, reason=reason)
+    db.log_gauge_reading("geo", score, now, detail=reason)
     logger.info(f"Geopolitical refresh: gauge {score} across {len(headlines)} articles")
     return {"gauge_score": score, "article_count": len(headlines), "headlines": headlines, "reason": reason}
 
@@ -256,6 +261,7 @@ def run_rate_tone_refresh(force: bool = False) -> dict:
 
     now = datetime.now(timezone.utc).isoformat()
     db.save_rate_tone_state(bank, meeting_date.isoformat(), result["score"], gauge_score, result["reason"], now)
+    db.log_gauge_reading("rate_tone", gauge_score, now, detail=result["reason"])
     logger.info(f"Rate tone ({bank}, {meeting_date}): raw {result['score']}, gauge {gauge_score} -- {result['reason']}")
     return {"bank": bank, "meeting_date": meeting_date.isoformat(), "gauge_score": gauge_score, "reason": result["reason"]}
 
@@ -281,11 +287,10 @@ def run_fomc_minutes_refresh(force: bool = False) -> dict:
     minutes_text = rate_tone_client.fetch_minutes_text(meeting_date)
     result = rate_tone_client.interpret_minutes_text(minutes_text)
 
-    # Fed hawkish -> USD strength -> GBPUSD bearish (inverted), same as the
-    # regular Fed statement -- Minutes are Fed-only, no BoE equivalent here.
     gauge_score = -result["score"]
 
     now = datetime.now(timezone.utc).isoformat()
     db.save_fomc_minutes_state(meeting_date.isoformat(), result["score"], gauge_score, result["reason"], now)
+    db.log_gauge_reading("fomc_minutes", gauge_score, now, detail=result["reason"])
     logger.info(f"FOMC Minutes ({meeting_date}): raw {result['score']}, gauge {gauge_score} -- {result['reason']}")
     return {"meeting_date": meeting_date.isoformat(), "gauge_score": gauge_score, "reason": result["reason"]}
