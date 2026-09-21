@@ -722,68 +722,59 @@ async function loadGeoGauge() {
 
 loadGeoGauge();
 
-// ---- Rate decision tone gauges -- Fed and BoE tracked and shown
-// SEPARATELY (used to share one "most recent of either bank" lookup, but
-// BoE meets 1 day after Fed in 5 of 8 months this year and always won,
-// so Fed's decision was never actually processed -- now genuinely two
-// independent gauges, matching the "never blend distinct signals" rule). ----
+// ---- Rate decision tone gauge -- ONE blended Fed+BoE reading, his
+// explicit choice after being shown the tradeoff (a blended score can
+// hide disagreement between the two banks, same risk as the earlier
+// Past Macro News blend). The underlying fetch/analysis for each bank
+// stays genuinely independent (that was the actual bug fix -- BoE used
+// to silently overwrite Fed every month); this only blends the DISPLAY,
+// and both banks' own reasoning stays visible below the blended verdict. ----
 async function loadRateToneGauge() {
   const body = document.getElementById('rate-tone-gauge-body');
   try {
-    const res = await fetch('/api/rate-tone');
-    const d = await res.json();
-    if (!d || d.gauge_score === undefined) {
-      body.innerHTML = `<div class="dim-small">No recent Fed decision to analyze yet.</div>`;
+    const [fedRes, boeRes] = await Promise.all([
+      fetch('/api/rate-tone'),
+      fetch('/api/boe-rate-tone'),
+    ]);
+    const fed = await fedRes.json();
+    const boe = await boeRes.json();
+
+    const hasFed = fed && fed.gauge_score !== undefined;
+    const hasBoe = boe && boe.gauge_score !== undefined;
+
+    if (!hasFed && !hasBoe) {
+      body.innerHTML = `<div class="dim-small">No recent Fed or BoE decision to analyze yet.</div>`;
       return;
     }
 
-    const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
-    const verdict = gbpusdVerdict(d.gauge_score, 0.15);
-    state.gaugeVerdicts.fedRateTone = d.gauge_score;
+    const blendedScore = (hasFed && hasBoe) ? (fed.gauge_score + boe.gauge_score) / 2
+      : (hasFed ? fed.gauge_score : boe.gauge_score);
+
+    const pct = 50 + Math.max(-1, Math.min(1, blendedScore)) * 50;
+    const verdict = gbpusdVerdict(blendedScore, 0.15);
+    state.gaugeVerdicts.rateTone = blendedScore;
     updateMacroBadge();
+
+    const fedNote = hasFed
+      ? `<div class="dim-small" style="margin-top:4px;">Fed · ${fed.meeting_date}${fed.reason ? ` — ${fed.reason}` : ''}</div>`
+      : `<div class="dim-small" style="margin-top:4px;">No recent Fed decision yet</div>`;
+    const boeNote = hasBoe
+      ? `<div class="dim-small" style="margin-top:4px;">BoE · ${boe.meeting_date}${boe.reason ? ` — ${boe.reason}` : ''}</div>`
+      : `<div class="dim-small" style="margin-top:4px;">No recent BoE decision yet</div>`;
 
     body.innerHTML = `
       <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
       <div class="gauge-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
       <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
-      <div class="dim-small" style="margin-top:4px;">${d.bank} · ${d.meeting_date}</div>
-      <div class="dim-small" style="margin-top:2px;">${d.reason || ''}</div>
+      ${fedNote}
+      ${boeNote}
     `;
   } catch (e) {
-    body.innerHTML = `<div class="dim-small">Fed rate tone data unavailable: ${e.message}</div>`;
-  }
-}
-
-async function loadBoeRateToneGauge() {
-  const body = document.getElementById('boe-rate-tone-gauge-body');
-  if (!body) return; // HTML panel not added yet
-  try {
-    const res = await fetch('/api/boe-rate-tone');
-    const d = await res.json();
-    if (!d || d.gauge_score === undefined) {
-      body.innerHTML = `<div class="dim-small">No recent BoE decision to analyze yet.</div>`;
-      return;
-    }
-
-    const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
-    const verdict = gbpusdVerdict(d.gauge_score, 0.15);
-    state.gaugeVerdicts.boeRateTone = d.gauge_score;
-    updateMacroBadge();
-
-    body.innerHTML = `
-      <div class="gauge-track"><div class="gauge-marker" style="left:calc(${pct}% - 1.5px)"></div></div>
-      <div class="gauge-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
-      <div class="gauge-read" style="color:${verdict.color}">${verdict.text}</div>
-      <div class="dim-small" style="margin-top:4px;">BoE · ${d.meeting_date}</div>
-      <div class="dim-small" style="margin-top:2px;">${d.reason || ''}</div>
-    `;
-  } catch (e) {
-    body.innerHTML = `<div class="dim-small">BoE rate tone data unavailable: ${e.message}</div>`;
+    body.innerHTML = `<div class="dim-small">Rate tone data unavailable: ${e.message}</div>`;
   }
 }
 
 loadRateToneGauge();
-loadBoeRateToneGauge();
 
 // ---- Live trade events (entry/exit markers on the chart) ----
 async function loadLiveTrades() {
@@ -835,7 +826,6 @@ if (refreshAllBtn) {
       loadMomentumGauge(),
       loadGeoGauge(),
       loadRateToneGauge(),
-      loadBoeRateToneGauge(),
       loadLiveTrades(),
     ]);
 
