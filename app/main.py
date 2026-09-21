@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 
 from datetime import datetime, timedelta, timezone
 from . import db, oanda_client, calendar_schedule, backtest, oanda_execution, scheduler_registry
-from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_rate_tone_refresh, run_fomc_minutes_refresh, BOX_SIZE
+from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_fed_rate_tone_refresh, run_boe_rate_tone_refresh, run_fomc_minutes_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("007-terminal")
@@ -32,7 +32,12 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", day_of_week="fri", hour="19", minute="45", id="cot_refresh_friday")
     scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
     scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*", id="geo_refresh")
-    scheduler.add_job(lambda: asyncio.to_thread(run_rate_tone_refresh), "cron", hour="*/4", id="rate_tone_refresh")
+    # Fed and BoE checked independently -- they used to share one "most
+    # recent of either bank" lookup, but BoE meets just 1 day after Fed in
+    # 5 of 8 months this year, so BoE always won that comparison and Fed's
+    # decision was never actually processed. Now both run on their own.
+    scheduler.add_job(lambda: asyncio.to_thread(run_fed_rate_tone_refresh), "cron", hour="*/4", id="fed_rate_tone_refresh")
+    scheduler.add_job(lambda: asyncio.to_thread(run_boe_rate_tone_refresh), "cron", hour="*/4", id="boe_rate_tone_refresh")
     # FOMC Minutes: rare (8x/year), so a daily safety-net check plus precise
     # scheduling below (same pattern as everything else) is more than enough.
     scheduler.add_job(lambda: asyncio.to_thread(run_fomc_minutes_refresh), "cron", hour="15", id="fomc_minutes_refresh")
@@ -41,8 +46,9 @@ async def lifespan(app: FastAPI):
     for bank, decision_dt in calendar_schedule.get_rate_decision_datetimes():
         check_dt = decision_dt + timedelta(minutes=20)
         if check_dt > now_utc:
+            refresh_fn = run_fed_rate_tone_refresh if bank == "Fed" else run_boe_rate_tone_refresh
             scheduler.add_job(
-                lambda: asyncio.to_thread(run_rate_tone_refresh),
+                lambda fn=refresh_fn: asyncio.to_thread(fn),
                 "date",
                 run_date=check_dt,
                 id=f"rate_tone_precise_{bank}_{decision_dt.date()}",
@@ -117,11 +123,17 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Startup geopolitical refresh failed: {e}")
 
-    async def _startup_rate_tone():
+    async def _startup_fed_rate_tone():
         try:
-            await asyncio.to_thread(run_rate_tone_refresh)
+            await asyncio.to_thread(run_fed_rate_tone_refresh)
         except Exception as e:
-            logger.error(f"Startup rate tone refresh failed: {e}")
+            logger.error(f"Startup Fed rate tone refresh failed: {e}")
+
+    async def _startup_boe_rate_tone():
+        try:
+            await asyncio.to_thread(run_boe_rate_tone_refresh)
+        except Exception as e:
+            logger.error(f"Startup BoE rate tone refresh failed: {e}")
 
     async def _startup_fomc_minutes():
         try:
@@ -136,7 +148,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_startup_cot())
     asyncio.create_task(_startup_momentum())
     asyncio.create_task(_startup_geo())
-    asyncio.create_task(_startup_rate_tone())
+    asyncio.create_task(_startup_fed_rate_tone())
+    asyncio.create_task(_startup_boe_rate_tone())
     asyncio.create_task(_startup_fomc_minutes())
     yield
     scheduler.shutdown()
@@ -283,6 +296,10 @@ async def geo_refresh_now():
 
 @app.get("/api/rate-tone")
 async def api_rate_tone():
+    """Fed rate tone. See /api/boe-rate-tone for BoE's own, genuinely
+    independent gauge -- these used to share one "most recent of either
+    bank" lookup that always favored BoE (it meets 1 day after Fed in 5 of
+    8 months this year), so Fed's own decision was never actually processed."""
     state = db.get_rate_tone_state()
     return JSONResponse(state or {})
 
@@ -290,10 +307,26 @@ async def api_rate_tone():
 @app.post("/api/rate-tone-refresh-now")
 async def rate_tone_refresh_now():
     try:
-        result = await asyncio.to_thread(run_rate_tone_refresh, True)
+        result = await asyncio.to_thread(run_fed_rate_tone_refresh, True)
         return JSONResponse(result)
     except Exception as e:
-        logger.error(f"Rate tone refresh failed: {e}")
+        logger.error(f"Fed rate tone refresh failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/boe-rate-tone")
+async def api_boe_rate_tone():
+    state = db.get_boe_rate_tone_state()
+    return JSONResponse(state or {})
+
+
+@app.post("/api/boe-rate-tone-refresh-now")
+async def boe_rate_tone_refresh_now():
+    try:
+        result = await asyncio.to_thread(run_boe_rate_tone_refresh, True)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"BoE rate tone refresh failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=502)
 
 
@@ -325,7 +358,8 @@ async def refresh_all():
         "cot": run_cot_refresh,
         "momentum": run_momentum_refresh,
         "geo": run_geo_refresh,
-        "rate_tone": lambda: run_rate_tone_refresh(force=True),
+        "fed_rate_tone": lambda: run_fed_rate_tone_refresh(force=True),
+        "boe_rate_tone": lambda: run_boe_rate_tone_refresh(force=True),
         "fomc_minutes": lambda: run_fomc_minutes_refresh(force=True),
     }
 

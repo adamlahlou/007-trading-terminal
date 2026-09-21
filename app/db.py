@@ -145,6 +145,23 @@ def init_db():
         )
         """
     )
+    # NEW: BoE tracked in its OWN table, genuinely separate from Fed's
+    # rate_tone_state above -- they used to share one lookup that always
+    # picked whichever bank met more recently, and since BoE meets just 1
+    # day after Fed in 5 of 8 months this year, Fed's decision was
+    # effectively never processed. Now both are independent.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS boe_rate_tone_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            meeting_date TEXT NOT NULL,
+            raw_score REAL NOT NULL,
+            gauge_score REAL NOT NULL,
+            reason TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS fomc_minutes_state (
@@ -483,8 +500,34 @@ def save_rate_tone_state(bank, meeting_date, raw_score, gauge_score, reason, upd
 
 
 def get_rate_tone_state() -> dict | None:
+    """Fed only now -- see save_boe_rate_tone_state for BoE's own,
+    genuinely independent table."""
     conn = get_conn()
     row = conn.execute("SELECT * FROM rate_tone_state WHERE id = 1").fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def save_boe_rate_tone_state(meeting_date, raw_score, gauge_score, reason, updated_at):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO boe_rate_tone_state (id, meeting_date, raw_score, gauge_score, reason, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            meeting_date=excluded.meeting_date, raw_score=excluded.raw_score,
+            gauge_score=excluded.gauge_score, reason=excluded.reason,
+            updated_at=excluded.updated_at
+        """,
+        (meeting_date, raw_score, gauge_score, reason, updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_boe_rate_tone_state() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM boe_rate_tone_state WHERE id = 1").fetchone()
     conn.close()
     return dict(row) if row else None
 

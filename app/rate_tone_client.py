@@ -10,6 +10,12 @@ Also fetches FOMC Minutes -- a genuinely separate, later-released document
 (3 weeks after the decision) that goes into far more depth than the brief
 statement, including actual dissent counts and vote splits.
 
+Fed and BoE decisions are tracked and looked up SEPARATELY (see
+find_most_recent_fed_decision / find_most_recent_boe_decision below) --
+they used to share one "most recent of either" lookup, but BoE meets just
+1 day after Fed in 5 of 8 months this year, so BoE always won that
+comparison and Fed's decision was never actually processed.
+
 URL patterns verified directly against the Fed's and BoE's own sites:
   Fed statement: https://www.federalreserve.gov/newsevents/pressreleases/monetary{YYYYMMDD}a.htm
   Fed minutes:   https://www.federalreserve.gov/monetarypolicy/fomcminutes{YYYYMMDD}.htm (meeting end date)
@@ -55,28 +61,31 @@ def _boe_url(d: date) -> str:
     return f"https://www.bankofengland.co.uk/monetary-policy-summary-and-minutes/{d.year}/{month_name}-{d.year}"
 
 
-def find_most_recent_decision(today: date, lookback_days: int = 3) -> tuple[str, date] | None:
-    """Returns (bank, date) for the most recent FOMC/BoE decision within the
-    last `lookback_days`, or None if nothing recent. Only looks backward --
-    we want the statement AFTER it's been published, not before."""
-    candidates = []
-    for d, _ in FOMC_DATES_2026:
-        if 0 <= (today - d).days <= lookback_days:
-            candidates.append(("Fed", d))
-    for d, _ in BOE_MPC_DATES_2026:
-        if 0 <= (today - d).days <= lookback_days:
-            candidates.append(("BoE", d))
+def _find_most_recent(dates: list[date], today: date, lookback_days: int) -> date | None:
+    candidates = [d for d in dates if 0 <= (today - d).days <= lookback_days]
     if not candidates:
         return None
-    candidates.sort(key=lambda c: c[1], reverse=True)
-    return candidates[0]
+    return max(candidates)
+
+
+def find_most_recent_fed_decision(today: date, lookback_days: int = 3) -> date | None:
+    """Returns the Fed meeting date if one was decided within the last
+    `lookback_days`, or None -- checks Fed's OWN calendar only, independent
+    of BoE, so a nearby BoE meeting can never shadow it."""
+    return _find_most_recent([d for d, _ in FOMC_DATES_2026], today, lookback_days)
+
+
+def find_most_recent_boe_decision(today: date, lookback_days: int = 3) -> date | None:
+    """Same as find_most_recent_fed_decision but for BoE's own calendar."""
+    return _find_most_recent([d for d, _ in BOE_MPC_DATES_2026], today, lookback_days)
 
 
 def find_most_recent_minutes(today: date, lookback_days: int = 3) -> date | None:
     """Returns the meeting_end_date whose Minutes were released within the
     last `lookback_days`, or None if nothing recent. Same lookback pattern
-    as find_most_recent_decision, just checking the computed RELEASE date
-    (meeting + 3 weeks), not the meeting date itself."""
+    as the decision lookups, just checking the computed RELEASE date
+    (meeting + 3 weeks), not the meeting date itself. Fed-only (Minutes
+    have no BoE equivalent), so no cross-bank shadowing risk here."""
     candidates = []
     for meeting_date, release_dt in get_fomc_minutes_release_datetimes():
         release_date = release_dt.date()

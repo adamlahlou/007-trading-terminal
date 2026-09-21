@@ -62,7 +62,11 @@ def get_gauge_verdicts() -> list[tuple[str, int]]:
 
     rate_tone_state = db.get_rate_tone_state()
     if rate_tone_state:
-        verdicts.append(("RateTone", _gauge_verdict(rate_tone_state["gauge_score"], 0.15)))
+        verdicts.append(("FedRateTone", _gauge_verdict(rate_tone_state["gauge_score"], 0.15)))
+
+    boe_rate_tone_state = db.get_boe_rate_tone_state()
+    if boe_rate_tone_state:
+        verdicts.append(("BoERateTone", _gauge_verdict(boe_rate_tone_state["gauge_score"], 0.15)))
 
     return verdicts
 
@@ -243,27 +247,55 @@ def run_geo_refresh() -> dict:
     return {"gauge_score": score, "article_count": len(headlines), "headlines": headlines, "reason": reason}
 
 
-def run_rate_tone_refresh(force: bool = False) -> dict:
+def run_fed_rate_tone_refresh(force: bool = False) -> dict:
+    """Fed's own independent check -- see run_boe_rate_tone_refresh for
+    BoE's, genuinely separate rather than sharing one "most recent of
+    either bank" lookup (which used to mean BoE, meeting just 1 day after
+    Fed in 5 of 8 months this year, always won and Fed was never processed)."""
     today = datetime.now(timezone.utc).date()
-    found = rate_tone_client.find_most_recent_decision(today)
-    if found is None:
-        return {"skipped": True, "reason": "no recent rate decision"}
+    meeting_date = rate_tone_client.find_most_recent_fed_decision(today)
+    if meeting_date is None:
+        return {"skipped": True, "reason": "no recent Fed decision"}
 
-    bank, meeting_date = found
     existing = db.get_rate_tone_state()
-    if not force and existing and existing["bank"] == bank and existing["meeting_date"] == meeting_date.isoformat():
+    if not force and existing and existing["meeting_date"] == meeting_date.isoformat():
         return {"skipped": True, "reason": "already processed this meeting"}
 
-    statement_text = rate_tone_client.fetch_statement_text(bank, meeting_date)
-    result = rate_tone_client.interpret_rate_statement(bank, statement_text)
+    statement_text = rate_tone_client.fetch_statement_text("Fed", meeting_date)
+    result = rate_tone_client.interpret_rate_statement("Fed", statement_text)
 
-    gauge_score = -result["score"] if bank == "Fed" else result["score"]
+    # Fed hawkish -> USD strength -> GBPUSD bearish (inverted)
+    gauge_score = -result["score"]
 
     now = datetime.now(timezone.utc).isoformat()
-    db.save_rate_tone_state(bank, meeting_date.isoformat(), result["score"], gauge_score, result["reason"], now)
-    db.log_gauge_reading("rate_tone", gauge_score, now, detail=result["reason"])
-    logger.info(f"Rate tone ({bank}, {meeting_date}): raw {result['score']}, gauge {gauge_score} -- {result['reason']}")
-    return {"bank": bank, "meeting_date": meeting_date.isoformat(), "gauge_score": gauge_score, "reason": result["reason"]}
+    db.save_rate_tone_state("Fed", meeting_date.isoformat(), result["score"], gauge_score, result["reason"], now)
+    db.log_gauge_reading("fed_rate_tone", gauge_score, now, detail=result["reason"])
+    logger.info(f"Fed rate tone ({meeting_date}): raw {result['score']}, gauge {gauge_score} -- {result['reason']}")
+    return {"bank": "Fed", "meeting_date": meeting_date.isoformat(), "gauge_score": gauge_score, "reason": result["reason"]}
+
+
+def run_boe_rate_tone_refresh(force: bool = False) -> dict:
+    """BoE's own independent check -- see run_fed_rate_tone_refresh above."""
+    today = datetime.now(timezone.utc).date()
+    meeting_date = rate_tone_client.find_most_recent_boe_decision(today)
+    if meeting_date is None:
+        return {"skipped": True, "reason": "no recent BoE decision"}
+
+    existing = db.get_boe_rate_tone_state()
+    if not force and existing and existing["meeting_date"] == meeting_date.isoformat():
+        return {"skipped": True, "reason": "already processed this meeting"}
+
+    statement_text = rate_tone_client.fetch_statement_text("BoE", meeting_date)
+    result = rate_tone_client.interpret_rate_statement("BoE", statement_text)
+
+    # BoE hawkish -> GBP strength -> GBPUSD bullish (direct, not inverted)
+    gauge_score = result["score"]
+
+    now = datetime.now(timezone.utc).isoformat()
+    db.save_boe_rate_tone_state(meeting_date.isoformat(), result["score"], gauge_score, result["reason"], now)
+    db.log_gauge_reading("boe_rate_tone", gauge_score, now, detail=result["reason"])
+    logger.info(f"BoE rate tone ({meeting_date}): raw {result['score']}, gauge {gauge_score} -- {result['reason']}")
+    return {"bank": "BoE", "meeting_date": meeting_date.isoformat(), "gauge_score": gauge_score, "reason": result["reason"]}
 
 
 def run_fomc_minutes_refresh(force: bool = False) -> dict:
