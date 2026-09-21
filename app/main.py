@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 from . import db, oanda_client, calendar_schedule, backtest, oanda_execution, scheduler_registry
 from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_fed_rate_tone_refresh, run_boe_rate_tone_refresh, run_fomc_minutes_refresh, BOX_SIZE
 
@@ -305,9 +305,13 @@ async def api_rate_tone():
 
 
 @app.post("/api/rate-tone-refresh-now")
-async def rate_tone_refresh_now():
+async def rate_tone_refresh_now(meeting_date: str = None):
+    """meeting_date=YYYY-MM-DD (optional): manually backfill a specific
+    past Fed meeting the routine checks missed (bypasses the normal 3-day
+    lookback entirely), e.g. ?meeting_date=2026-09-16"""
     try:
-        result = await asyncio.to_thread(run_fed_rate_tone_refresh, True)
+        override = date.fromisoformat(meeting_date) if meeting_date else None
+        result = await asyncio.to_thread(run_fed_rate_tone_refresh, True, override)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Fed rate tone refresh failed: {e}")
@@ -321,9 +325,11 @@ async def api_boe_rate_tone():
 
 
 @app.post("/api/boe-rate-tone-refresh-now")
-async def boe_rate_tone_refresh_now():
+async def boe_rate_tone_refresh_now(meeting_date: str = None):
+    """Same meeting_date override as /api/rate-tone-refresh-now, for BoE."""
     try:
-        result = await asyncio.to_thread(run_boe_rate_tone_refresh, True)
+        override = date.fromisoformat(meeting_date) if meeting_date else None
+        result = await asyncio.to_thread(run_boe_rate_tone_refresh, True, override)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"BoE rate tone refresh failed: {e}")

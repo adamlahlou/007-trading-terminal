@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from . import db, oanda_client, calendar_schedule, notifier, fred_client, marketaux_client, cot_client, llm_client, rate_tone_client, live_trader, freenews_client, live_execution
 from .renko import RenkoState, process_candle
 
@@ -247,15 +247,23 @@ def run_geo_refresh() -> dict:
     return {"gauge_score": score, "article_count": len(headlines), "headlines": headlines, "reason": reason}
 
 
-def run_fed_rate_tone_refresh(force: bool = False) -> dict:
+def run_fed_rate_tone_refresh(force: bool = False, meeting_date_override: date = None) -> dict:
     """Fed's own independent check -- see run_boe_rate_tone_refresh for
     BoE's, genuinely separate rather than sharing one "most recent of
     either bank" lookup (which used to mean BoE, meeting just 1 day after
-    Fed in 5 of 8 months this year, always won and Fed was never processed)."""
-    today = datetime.now(timezone.utc).date()
-    meeting_date = rate_tone_client.find_most_recent_fed_decision(today)
-    if meeting_date is None:
-        return {"skipped": True, "reason": "no recent Fed decision"}
+    Fed in 5 of 8 months this year, always won and Fed was never processed).
+
+    meeting_date_override: bypasses the normal 3-day "was this recent"
+    lookback entirely and fetches/processes that exact date instead --
+    for manually backfilling a real meeting the routine checks missed
+    (e.g. this fix being deployed a few days after the actual decision)."""
+    if meeting_date_override is not None:
+        meeting_date = meeting_date_override
+    else:
+        today = datetime.now(timezone.utc).date()
+        meeting_date = rate_tone_client.find_most_recent_fed_decision(today)
+        if meeting_date is None:
+            return {"skipped": True, "reason": "no recent Fed decision"}
 
     existing = db.get_rate_tone_state()
     if not force and existing and existing["meeting_date"] == meeting_date.isoformat():
@@ -274,12 +282,16 @@ def run_fed_rate_tone_refresh(force: bool = False) -> dict:
     return {"bank": "Fed", "meeting_date": meeting_date.isoformat(), "gauge_score": gauge_score, "reason": result["reason"]}
 
 
-def run_boe_rate_tone_refresh(force: bool = False) -> dict:
-    """BoE's own independent check -- see run_fed_rate_tone_refresh above."""
-    today = datetime.now(timezone.utc).date()
-    meeting_date = rate_tone_client.find_most_recent_boe_decision(today)
-    if meeting_date is None:
-        return {"skipped": True, "reason": "no recent BoE decision"}
+def run_boe_rate_tone_refresh(force: bool = False, meeting_date_override: date = None) -> dict:
+    """BoE's own independent check -- see run_fed_rate_tone_refresh above
+    (including the meeting_date_override escape hatch)."""
+    if meeting_date_override is not None:
+        meeting_date = meeting_date_override
+    else:
+        today = datetime.now(timezone.utc).date()
+        meeting_date = rate_tone_client.find_most_recent_boe_decision(today)
+        if meeting_date is None:
+            return {"skipped": True, "reason": "no recent BoE decision"}
 
     existing = db.get_boe_rate_tone_state()
     if not force and existing and existing["meeting_date"] == meeting_date.isoformat():
