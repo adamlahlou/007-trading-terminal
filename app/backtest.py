@@ -73,6 +73,16 @@ def _get_votes(gauge_hist, at_time: str, gauge_set: str) -> dict:
     if gauge_set == "news_geo_rate_tone":
         votes = gauge_hist.votes_as_of(at_time, include_rate_tone=True, include_news_geo=True)
         return {k: v for k, v in votes.items() if k in ("news", "geo", "rate_tone")}
+    if gauge_set == "rate_tone_only":
+        # Built directly from the reversal-analysis finding: rate tone was
+        # the one gauge whose agreement correlated with better outcomes
+        # CONSISTENTLY across every month tested (Jan-Apr 2026), unlike
+        # yield/COT/momentum which were flat or actively backwards. With
+        # gate_threshold=1 and only one gauge in this set, this requires
+        # rate tone to genuinely agree with the trade direction -- neutral
+        # or disagreeing both correctly block the trade.
+        votes = gauge_hist.votes_as_of(at_time, include_rate_tone=True)
+        return {k: v for k, v in votes.items() if k == "rate_tone"}
     return gauge_hist.votes_as_of(at_time)
 
 
