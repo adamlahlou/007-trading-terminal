@@ -345,6 +345,110 @@ def run_backtest(
     return result
 
 
+def run_reversal_analysis(start_date: str, end_date: str, box_size: float = 0.0022) -> dict:
+    """
+    Finds EVERY genuine reversal brick in the window (direction differs
+    from the previous brick) and, for each one, independently simulates a
+    standalone hypothetical trade using the SAME validated tight-trail
+    exit logic (hold 2 bricks, then trail 1 box) -- completely ignoring
+    the strict 2-of-3 gate, since the gate itself throws away most real
+    reversals before we ever see how they'd have performed on their own.
+
+    Tags each reversal with what EVERY individual gauge actually said at
+    that exact moment (via the same historical reconstruction already
+    validated for the real backtest -- yield, COT, momentum, rate tone,
+    geo, news), so real statistical correlations between a specific
+    gauge's reading and reversal outcome can be computed directly from
+    genuine evidence, not reasoned about in the abstract.
+
+    Unlike run_backtest, trades here are NOT sequential/non-overlapping --
+    every reversal is tested as its own independent standalone bet, since
+    the question being asked is "how does THIS kind of reversal tend to
+    perform", not "what would one continuous trading account have done".
+    Deliberately uses brick-close precision for the forward simulation
+    (not candle-level high/low stop-checks like run_backtest) -- a
+    reasonable simplification for this exploratory statistical pass, not
+    a final PnL commitment the way the main backtest result is.
+    """
+    start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+    candles = oanda_client.fetch_candles(since=start, until=end, granularity="M15")
+    if not candles:
+        raise RuntimeError("No candles returned for the requested window")
+
+    state = RenkoState(box_size=box_size)
+    all_bricks = []
+    for candle in candles:
+        new_bricks = process_candle(state, candle)
+        all_bricks.extend(new_bricks)
+
+    gauge_hist = GaugeHistory(start.date(), end.date())
+    initial_stop_dist = INITIAL_STOP_PIPS * PIP
+
+    reversals = []
+
+    for i, b in enumerate(all_bricks):
+        if i == 0:
+            continue  # no previous brick to compare against -- can't tell if this is a reversal
+        prev = all_bricks[i - 1]
+        if b.direction == prev.direction:
+            continue  # not a reversal
+
+        direction = b.direction
+        entry_price = b.close
+        stop_price = entry_price - initial_stop_dist if direction == 1 else entry_price + initial_stop_dist
+        favorable_bricks = 0
+        exit_price = None
+        exit_reason = None
+
+        # Walk forward through SUBSEQUENT bricks only, independent of any
+        # other reversal's own simulated trade -- same tight-trail rule
+        # (hold 2 bricks, then trail 1 box) already validated elsewhere.
+        for j in range(i + 1, len(all_bricks)):
+            nb = all_bricks[j]
+            if nb.direction == direction:
+                favorable_bricks += 1
+                if favorable_bricks >= HOLD_BRICKS_BEFORE_TRAILING:
+                    trail_dist = TRAIL_BOXES * box_size
+                    candidate_stop = nb.close - trail_dist if direction == 1 else nb.close + trail_dist
+                    stop_price = max(stop_price, candidate_stop) if direction == 1 else min(stop_price, candidate_stop)
+                if (direction == 1 and nb.close <= stop_price) or (direction == -1 and nb.close >= stop_price):
+                    exit_price = stop_price
+                    exit_reason = "stop"
+                    break
+            else:
+                # genuine reversal against this hypothetical position --
+                # same more-protective-of-the-two logic used in run_backtest
+                exit_price = max(stop_price, nb.close) if direction == 1 else min(stop_price, nb.close)
+                exit_reason = "reversal"
+                break
+
+        if exit_price is None:
+            # ran out of bricks before resolving -- mark-to-market at the window's last close
+            exit_price = all_bricks[-1].close
+            exit_reason = "end_of_window"
+
+        pips = (exit_price - entry_price) / PIP if direction == 1 else (entry_price - exit_price) / PIP
+
+        gauges = gauge_hist.votes_as_of(b.formed_at, include_rate_tone=True, include_news_geo=True)
+
+        reversals.append({
+            "entry_time": b.formed_at,
+            "direction": "long" if direction == 1 else "short",
+            "pips": round(pips, 1),
+            "outcome": "win" if pips > 0 else "loss",
+            "exit_reason": exit_reason,
+            "gauges": gauges,
+        })
+
+    return {
+        "window": f"{start.date().isoformat()} to {end.date().isoformat()}",
+        "total_reversals": len(reversals),
+        "reversals": reversals,
+    }
+
+
 def _summarize(trades: list[dict], days: int, require_reversal_to_reenter: bool, continuation_override: str | None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2) -> dict:
     if gate_all_entries:
         mode = f"gate_all_entries_{gate_threshold}of3"

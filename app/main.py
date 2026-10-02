@@ -433,3 +433,17 @@ async def api_gauge_history(gauge: str = None, limit: int = 1000):
     trades actually did afterward. gauge=geo (etc.) filters to one gauge;
     omit for every gauge's history together."""
     return JSONResponse({"history": db.get_gauge_history(gauge_name=gauge, limit=limit)})
+
+
+@app.get("/api/reversal-analysis")
+async def api_reversal_analysis(start_date: str, end_date: str):
+    """Every genuine reversal in the window, tagged with what every
+    individual gauge actually said at that moment -- independent of the
+    entry gate, so real statistical correlations between a gauge's
+    reading and reversal outcome can be computed from genuine evidence."""
+    try:
+        result = await asyncio.to_thread(backtest.run_reversal_analysis, start_date, end_date)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Reversal analysis failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
