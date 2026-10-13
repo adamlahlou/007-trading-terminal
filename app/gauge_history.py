@@ -244,3 +244,54 @@ class GaugeHistory:
             if news is not None:
                 votes["news"] = 1 if news > threshold else (-1 if news < -threshold else 0)
         return votes
+
+    def badge_votes_as_of(self, target_date: str) -> dict:
+        """Mirrors the frontend macro badge EXACTLY -- the same 6 slots
+        (yield, news, cot, momentum blended with rate tone, geo, rate_tone
+        standalone) with each gauge's own real display threshold, not one
+        uniform number. Built so the live/backtest entry gate can never
+        show a different verdict than what the badge visibly displays."""
+        votes = {}
+
+        y = self.yield_score(target_date)
+        if y is not None:
+            norm = y / 1.5  # GAUGE_CLAMP, same normalization the yield panel uses
+            votes["yield"] = 1 if norm > 0.1 else (-1 if norm < -0.1 else 0)
+
+        news = self.news_score(target_date)
+        if news is not None:
+            votes["news"] = 1 if news > 0.15 else (-1 if news < -0.15 else 0)
+
+        c = self.cot_score(target_date)
+        if c is not None:
+            votes["cot"] = 1 if c > 0.1 else (-1 if c < -0.1 else 0)
+
+        m = self.momentum_score(target_date)
+        rt = self.rate_tone_score(target_date)
+        if m is not None:
+            blended = (m + rt) / 2 if rt is not None else m
+            votes["momentum"] = 1 if blended > 0.15 else (-1 if blended < -0.15 else 0)
+
+        geo = self.geopolitical_score(target_date)
+        if geo is not None:
+            votes["geo"] = 1 if geo > 0.15 else (-1 if geo < -0.15 else 0)
+
+        if rt is not None:
+            votes["rate_tone"] = 1 if rt > 0.15 else (-1 if rt < -0.15 else 0)
+
+        return votes
+
+
+def macro_verdict(votes: dict) -> int:
+    """Same rule as the frontend's updateMacroBadge(): more bullish votes
+    than bearish -> 1 (BULLISH MACRO), more bearish -> -1 (BEARISH MACRO),
+    a tie (including all-neutral) -> 0 (MIXED MACRO, no entry). Shared by
+    live_trader.py and backtest.py so they can never diverge from each
+    other or from the badge."""
+    bullish = sum(1 for v in votes.values() if v > 0)
+    bearish = sum(1 for v in votes.values() if v < 0)
+    if bullish > bearish:
+        return 1
+    if bearish > bullish:
+        return -1
+    return 0

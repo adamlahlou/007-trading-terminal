@@ -6,6 +6,18 @@ function gbpusdVerdict(score, threshold = 0.15) {
   return { text: 'NEUTRAL', color: 'var(--amber)' };
 }
 
+// Converts a gauge's own already-thresholded verdict text back to -1/0/1,
+// so the macro badge counts EXACTLY what each panel displays -- not a
+// re-threshold of the raw score against some other flat number. This is
+// the fix for the badge disagreeing with its own panels (e.g. COT showing
+// BULLISH GBPUSD on its own 0.1 threshold, but not counting as bullish in
+// the badge because the badge used to re-check it against 0.15 instead).
+function verdictToNum(verdict) {
+  if (verdict.text === 'BULLISH GBPUSD') return 1;
+  if (verdict.text === 'BEARISH GBPUSD') return -1;
+  return 0;
+}
+
 function tick() {
   const now = new Date();
   document.getElementById('clock').textContent = now.toLocaleTimeString('en-GB', { hour12: false });
@@ -55,8 +67,8 @@ function updateMacroBadge() {
   const verdicts = Object.values(state.gaugeVerdicts);
   if (!verdicts.length) { badge.textContent = ''; return; }
 
-  const bullish = verdicts.filter(v => v > 0.15).length;
-  const bearish = verdicts.filter(v => v < -0.15).length;
+  const bullish = verdicts.filter(v => v > 0).length;
+  const bearish = verdicts.filter(v => v < 0).length;
 
   let text, color;
   if (bullish > bearish) { text = 'BULLISH MACRO'; color = 'var(--white)'; }
@@ -493,7 +505,7 @@ async function loadYields() {
     // spread is already in "positive = GBP favorable" terms, but the raw
     // magnitude (~0.1-0.3 typical) needs its own threshold, not the shared 0.15 default
     const verdict = gbpusdVerdict(clamped / GAUGE_CLAMP, 0.1);
-    state.gaugeVerdicts.yield = clamped / GAUGE_CLAMP;
+    state.gaugeVerdicts.yield = verdictToNum(verdict);
     updateMacroBadge();
 
     body.innerHTML = `
@@ -534,7 +546,7 @@ async function loadNewsGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.score)) * 50;
     const verdict = gbpusdVerdict(d.score);
-    state.gaugeVerdicts.news = d.score;
+    state.gaugeVerdicts.news = verdictToNum(verdict);
     updateMacroBadge();
     const hasGbpScore = d.gbp_score !== null && d.gbp_score !== undefined;
     const hasUsdScore = d.usd_score !== null && d.usd_score !== undefined;
@@ -587,7 +599,7 @@ async function loadCotGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.1);
-    state.gaugeVerdicts.cot = d.gauge_score;
+    state.gaugeVerdicts.cot = verdictToNum(verdict);
     updateMacroBadge();
     const positioningNote = d.gauge_score > 0.1 ? 'Leveraged funds net long GBP'
       : (d.gauge_score < -0.1 ? 'Leveraged funds net short GBP' : 'Leveraged funds roughly flat');
@@ -643,7 +655,7 @@ async function loadMomentumGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, blendedScore)) * 50;
     const verdict = gbpusdVerdict(blendedScore);
-    state.gaugeVerdicts.momentum = blendedScore;
+    state.gaugeVerdicts.momentum = verdictToNum(verdict);
     updateMacroBadge();
 
     const dataNote = d.gauge_score > 0.15 ? 'Cooling US data'
@@ -688,7 +700,7 @@ async function loadGeoGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.15);
-    state.gaugeVerdicts.geo = d.gauge_score;
+    state.gaugeVerdicts.geo = verdictToNum(verdict);
     updateMacroBadge();
     const note = d.reason
       ? d.reason
@@ -741,7 +753,7 @@ async function loadRateToneGauge() {
 
     const pct = 50 + Math.max(-1, Math.min(1, d.gauge_score)) * 50;
     const verdict = gbpusdVerdict(d.gauge_score, 0.15);
-    state.gaugeVerdicts.rateTone = d.gauge_score;
+    state.gaugeVerdicts.rateTone = verdictToNum(verdict);
     updateMacroBadge();
 
     body.innerHTML = `

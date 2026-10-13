@@ -7,8 +7,13 @@ entry/exit events tagged to specific brick sequence numbers so the chart
 can show a dot at exactly the right spot.
 
 Entry rule: NO entry is taken -- fresh from flat, a same-direction
-continuation, or even a genuine reversal brick -- unless 2+ of 3 gauges
-(yield, COT, momentum) agree with that direction.
+continuation, or even a genuine reversal brick -- unless the OVERALL
+macro verdict across every available gauge (yield, news, COT, momentum
+blended with rate tone, geo, rate tone standalone) agrees with that
+direction, by strict majority. A tied/mixed verdict blocks ALL entries,
+long or short -- this is the exact same majority rule the macro badge
+uses, so the live badge and the live gate can never show one thing while
+doing another again.
 
 Trailing rule: breakeven-then-wide -- hold the stop unmoved for 2 bricks,
 then move it to EXACT breakeven, then trail a full 2 boxes (44 pips) from
@@ -18,32 +23,62 @@ trades on ordinary 1-box pullbacks that weren't genuine reversals.
 from __future__ import annotations
 from datetime import datetime, timezone
 from . import db, notifier
-from .backtest import INITIAL_STOP_PIPS, BREAKEVEN_AFTER_BRICKS, WIDE_TRAIL_BOXES, PIP, _continuation_allowed
+from .backtest import INITIAL_STOP_PIPS, BREAKEVEN_AFTER_BRICKS, WIDE_TRAIL_BOXES, PIP
+from .gauge_history import macro_verdict
 
 
 def _current_gauge_votes() -> dict:
-    """Live equivalent of GaugeHistory's point-in-time votes_as_of -- just
-    reads today's actual current gauge state instead of a historical
-    reconstruction, using the same yield/COT/momentum trio and thresholds."""
+    """Live equivalent of GaugeHistory.badge_votes_as_of -- reads today's
+    actual current gauge state instead of a historical reconstruction, but
+    mirrors the SAME 6 slots and SAME per-gauge thresholds the macro badge
+    actually displays with (yield/cot at 0.1, news/geo/momentum-blend/
+    rate_tone at 0.15, momentum blended with rate tone exactly like the
+    "Past Macro News" panel). Deliberately NOT a flat/uniform threshold --
+    that mismatch between the badge and the gate is exactly what was wrong
+    before."""
     votes = {}
+
     yield_state = db.get_yield_state()
     if yield_state:
-        s = yield_state["spread"]
-        votes["yield"] = 1 if s > 0.1 else (-1 if s < -0.1 else 0)
+        norm = yield_state["spread"] / 1.5  # same GAUGE_CLAMP normalization as the yield panel
+        votes["yield"] = 1 if norm > 0.1 else (-1 if norm < -0.1 else 0)
+
+    news_state = db.get_news_state()
+    if news_state:
+        s = news_state["score"]
+        votes["news"] = 1 if s > 0.15 else (-1 if s < -0.15 else 0)
+
     cot_state = db.get_cot_state()
     if cot_state:
         s = cot_state["gauge_score"]
         votes["cot"] = 1 if s > 0.1 else (-1 if s < -0.1 else 0)
+
     momentum_state = db.get_momentum_state()
+    rate_tone_state = db.get_rate_tone_state()  # Fed only -- the only one actually shown live
     if momentum_state:
-        s = momentum_state["gauge_score"]
-        votes["momentum"] = 1 if s > 0.15 else (-1 if s < -0.15 else 0)
+        m = momentum_state["gauge_score"]
+        blended = (m + rate_tone_state["gauge_score"]) / 2 if rate_tone_state else m
+        votes["momentum"] = 1 if blended > 0.15 else (-1 if blended < -0.15 else 0)
+
+    geo_state = db.get_geo_state()
+    if geo_state:
+        s = geo_state["gauge_score"]
+        votes["geo"] = 1 if s > 0.15 else (-1 if s < -0.15 else 0)
+
+    if rate_tone_state:
+        s = rate_tone_state["gauge_score"]
+        votes["rate_tone"] = 1 if s > 0.15 else (-1 if s < -0.15 else 0)
+
     return votes
 
 
 def _gauges_support(direction: int) -> bool:
+    """Entry only taken when the OVERALL macro verdict itself matches the
+    direction being taken -- same majority rule as the badge. A tied
+    (MIXED MACRO) verdict is 0, which never equals +1 or -1, so no entry
+    at all is taken while the top reads mixed."""
     votes = _current_gauge_votes()
-    return _continuation_allowed(votes, direction, "majority")
+    return macro_verdict(votes) == direction
 
 
 def process_scan(candle_brick_groups: list[tuple[dict, list[tuple[object, int]]]], box_size: float) -> list[dict]:

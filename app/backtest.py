@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from . import oanda_client
 from .renko import RenkoState, process_candle
-from .gauge_history import GaugeHistory
+from .gauge_history import GaugeHistory, macro_verdict
 
 PIP = 0.0001
 INITIAL_STOP_PIPS = 52
@@ -83,6 +83,13 @@ def _get_votes(gauge_hist, at_time: str, gauge_set: str) -> dict:
         # or disagreeing both correctly block the trade.
         votes = gauge_hist.votes_as_of(at_time, include_rate_tone=True)
         return {k: v for k, v in votes.items() if k == "rate_tone"}
+    if gauge_set == "all_gauges_badge":
+        # Built directly from Adam's explicit instruction: the entry gate
+        # should match "the top" (the macro badge) exactly -- majority
+        # vote across every available gauge, mixed = no entry. See
+        # macro_verdict() in gauge_history.py and gauges_support() below,
+        # which switches to it for this gauge_set.
+        return gauge_hist.badge_votes_as_of(at_time)
     return gauge_hist.votes_as_of(at_time)
 
 
@@ -231,6 +238,11 @@ def run_backtest(
         if gauge_hist is None:
             return True
         votes = _get_votes(gauge_hist, at_time, gauge_set)
+        if gauge_set == "all_gauges_badge":
+            # Macro-verdict matching, not a fixed "N of M" threshold --
+            # mixed (tied) votes return 0, which matches neither +1 nor -1,
+            # so no entry is taken at all while the top reads mixed.
+            return macro_verdict(votes) == direction
         return _continuation_allowed(votes, direction, "majority", gate_threshold)
 
     for candle in candles:
