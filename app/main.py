@@ -384,9 +384,9 @@ async def refresh_all():
 
 
 @app.get("/api/backtest")
-async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None, debug_gauges: bool = False, gauge_set: str = "yield_cot_momentum"):
+async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None, debug_gauges: bool = False, gauge_set: str = "yield_cot_momentum", macro_exit: bool = False):
     try:
-        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges, gauge_set)
+        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges, gauge_set, macro_exit)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
