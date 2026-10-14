@@ -13,7 +13,7 @@ Cadence (a cheap check runs every 5 minutes, an LLM call only happens when
 needed):
   * a gauge verdict flipped, or a calendar release landed -> call (debounced
     to at most one call per 5 minutes)
-  * otherwise at most one call every 30 minutes
+  * otherwise at most one call every 15 minutes
 
 Every call is logged to macro_llm_log with its full inputs, so after a few
 weeks the backtester can replay the model's REAL verdicts by timestamp --
@@ -38,7 +38,7 @@ from .gauge_history import macro_verdict
 
 logger = logging.getLogger("007-terminal")
 
-REFRESH_MINUTES = 30      # max gap between calls
+REFRESH_MINUTES = 15      # max gap between calls
 DEBOUNCE_MINUTES = 5      # min gap between calls, even if something changed
 MAX_AGE_MINUTES = int(os.environ.get("MACRO_LLM_MAX_AGE_MIN", "90"))      # older than this = ignored by the gate
 MIN_CONFIDENCE = float(os.environ.get("MACRO_LLM_MIN_CONFIDENCE", "0.55"))  # below this = treated as neutral by the gate
