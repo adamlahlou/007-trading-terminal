@@ -231,6 +231,24 @@ def init_db():
         )
         """
     )
+    # LLM macro verdict log -- INSERT-only, full inputs kept, so the model's
+    # real verdicts can be replayed by timestamp in the backtester later.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS macro_llm_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            reason TEXT,
+            key_drivers_json TEXT,
+            inputs_json TEXT,
+            fingerprint TEXT,
+            count_verdict TEXT,
+            trigger_kind TEXT
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -652,3 +670,46 @@ def get_gauge_history(gauge_name: str | None = None, limit: int = 1000) -> list[
         ).fetchall()
     conn.close()
     return [dict(r) for r in reversed(rows)]
+
+
+
+def add_macro_llm_log(created_at, verdict, confidence, reason, key_drivers, inputs, fingerprint, count_verdict, trigger):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO macro_llm_log
+        (created_at, verdict, confidence, reason, key_drivers_json, inputs_json, fingerprint, count_verdict, trigger_kind)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (created_at, verdict, confidence, reason, json.dumps(key_drivers), json.dumps(inputs, default=str),
+         fingerprint, count_verdict, trigger),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _macro_llm_row(r, include_inputs=True):
+    d = {
+        "id": r["id"], "created_at": r["created_at"], "verdict": r["verdict"],
+        "confidence": r["confidence"], "reason": r["reason"],
+        "key_drivers": json.loads(r["key_drivers_json"] or "[]"),
+        "fingerprint": r["fingerprint"], "count_verdict": r["count_verdict"], "trigger": r["trigger_kind"],
+    }
+    if include_inputs:
+        d["inputs"] = json.loads(r["inputs_json"] or "{}")
+    return d
+
+
+def get_latest_macro_llm() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM macro_llm_log ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    return _macro_llm_row(row) if row else None
+
+
+def get_macro_llm_log(limit: int = 100, include_inputs: bool = False) -> list[dict]:
+    """Oldest-first, like get_gauge_history."""
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM macro_llm_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    conn.close()
+    return [_macro_llm_row(r, include_inputs) for r in reversed(rows)]

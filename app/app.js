@@ -79,6 +79,32 @@ function updateMacroBadge() {
   badge.style.color = color;
 }
 
+// AI macro verdict, shown beside the count badge (see macro_llm.py). Pure
+// display here -- whether it GATES entries is the GATE_SOURCE server setting.
+async function loadMacroLlm() {
+  try {
+    const badge = document.getElementById('macro-badge');
+    if (!badge) return;
+    const r = await fetch('/api/macro-llm');
+    const d = await r.json();
+    let el = document.getElementById('macro-llm-badge');
+    if (!el) {
+      el = document.createElement('span');
+      el.id = 'macro-llm-badge';
+      el.style.marginLeft = '14px';
+      el.style.fontSize = '0.8em';
+      badge.insertAdjacentElement('afterend', el);
+    }
+    if (!d || !d.verdict) { el.textContent = ''; return; }
+    const color = d.verdict === 'bullish' ? 'var(--white)' : d.verdict === 'bearish' ? 'var(--blue)' : 'var(--amber)';
+    el.textContent = `AI: ${d.verdict.toUpperCase()} ${Math.round(d.confidence * 100)}%` + (d.stale ? ' (stale)' : '') + (d.gate_source === 'llm' ? ' · GATING' : '');
+    el.style.color = color;
+    el.title = `${d.reason}\n\nDrivers: ${(d.key_drivers || []).join('; ')}\n\nUpdated ${d.age_minutes} min ago`;
+  } catch (e) { /* display only -- never break the page */ }
+}
+loadMacroLlm();
+setInterval(loadMacroLlm, 60000);
+
 function drawBricks() {
   const { bricks, livePrice, boxSize } = state;
   const canvas = document.getElementById('renko');

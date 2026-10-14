@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
 from datetime import datetime, timedelta, timezone, date
-from . import db, oanda_client, calendar_schedule, backtest, oanda_execution, scheduler_registry
+from . import db, oanda_client, calendar_schedule, backtest, oanda_execution, scheduler_registry, macro_llm
 from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_fed_rate_tone_refresh, run_boe_rate_tone_refresh, run_fomc_minutes_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +32,10 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(lambda: asyncio.to_thread(run_cot_refresh), "cron", day_of_week="fri", hour="19", minute="45", id="cot_refresh_friday")
     scheduler.add_job(lambda: asyncio.to_thread(run_momentum_refresh), "cron", hour="8", id="momentum_refresh")
     scheduler.add_job(lambda: asyncio.to_thread(run_geo_refresh), "cron", hour="*", id="geo_refresh")
+    # LLM macro verdict: a cheap check every 5 min; the model is only actually
+    # called when a gauge verdict flipped / a release landed (debounced), or
+    # every 30 min at most. See macro_llm.py.
+    scheduler.add_job(lambda: asyncio.to_thread(macro_llm.run_macro_llm_refresh), "cron", minute="*/5", id="macro_llm_refresh")
     # Fed and BoE checked independently -- they used to share one "most
     # recent of either bank" lookup, but BoE meets just 1 day after Fed in
     # 5 of 8 months this year, so BoE always won that comparison and Fed's
@@ -151,6 +155,15 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_startup_fed_rate_tone())
     asyncio.create_task(_startup_boe_rate_tone())
     asyncio.create_task(_startup_fomc_minutes())
+
+    async def _startup_macro_llm():
+        try:
+            await asyncio.sleep(90)  # let the gauges above finish loading first
+            await asyncio.to_thread(macro_llm.run_macro_llm_refresh)
+        except Exception as e:
+            logger.error(f"Startup macro LLM refresh failed: {e}")
+
+    asyncio.create_task(_startup_macro_llm())
     yield
     scheduler.shutdown()
 
@@ -423,6 +436,39 @@ async def emergency_flatten():
         return JSONResponse({"ok": True, "result": result})
     except Exception as e:
         logger.error(f"Emergency flatten failed: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+
+
+@app.get("/api/macro-llm")
+async def api_macro_llm():
+    """Latest LLM macro verdict, plus what the live gate is actually using."""
+    last = db.get_latest_macro_llm()
+    gate = macro_llm.gate_source()
+    effective = macro_llm.current_verdict_num()
+    if not last:
+        return JSONResponse({"gate_source": gate, "verdict": None})
+    last.pop("inputs", None)
+    created = macro_llm._parse_time(last["created_at"])
+    age = (datetime.now(timezone.utc) - created).total_seconds() / 60 if created else None
+    last["age_minutes"] = round(age, 1) if age is not None else None
+    last["stale"] = age is None or age > macro_llm.MAX_AGE_MINUTES
+    last["gate_source"] = gate
+    last["gate_verdict_now"] = effective  # +1 / -1 / 0, or null = no usable verdict (gate falls back to the count)
+    return JSONResponse(last)
+
+
+@app.get("/api/macro-llm/log")
+async def api_macro_llm_log(limit: int = 100, include_inputs: bool = False):
+    return JSONResponse({"log": db.get_macro_llm_log(limit=limit, include_inputs=include_inputs)})
+
+
+@app.post("/api/macro-llm-refresh-now")
+async def api_macro_llm_refresh_now():
+    try:
+        result = await asyncio.to_thread(macro_llm.run_macro_llm_refresh, True)
+        return JSONResponse({"ok": True, **result})
+    except Exception as e:
+        logger.error(f"Macro LLM refresh failed: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
 
 

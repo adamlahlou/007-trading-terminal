@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from . import db, notifier
 from .backtest import INITIAL_STOP_PIPS, BREAKEVEN_AFTER_BRICKS, WIDE_TRAIL_BOXES, PIP
 from .gauge_history import macro_verdict
+from . import macro_llm
 
 
 def _current_gauge_votes() -> dict:
@@ -77,6 +78,12 @@ def _gauges_support(direction: int) -> bool:
     direction being taken -- same majority rule as the badge. A tied
     (MIXED MACRO) verdict is 0, which never equals +1 or -1, so no entry
     at all is taken while the top reads mixed."""
+    if macro_llm.gate_source() == "llm":
+        llm_verdict = macro_llm.current_verdict_num()
+        if llm_verdict is not None:
+            return llm_verdict == direction
+        # No fresh LLM verdict (none logged yet, or too old) -- fall back to
+        # the plain gauge count rather than freezing or trading blind.
     votes = _current_gauge_votes()
     return macro_verdict(votes) == direction
 
