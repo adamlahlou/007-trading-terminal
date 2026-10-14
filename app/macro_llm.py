@@ -89,7 +89,7 @@ def _gauge_snapshot() -> list[dict]:
         gauges.append({
             "name": "news", "score": round(n["score"], 3), "vote": _vote(n["score"], 0.15),
             "detail": f"GBP tone {n.get('gbp_score')}, USD tone {n.get('usd_score')}",
-            "headlines": _headline_titles(n.get("headlines")),
+            "headlines": _headline_titles(n.get("headlines"), 12),
         })
 
     c = db.get_cot_state()
@@ -115,7 +115,7 @@ def _gauge_snapshot() -> list[dict]:
             "name": "geo", "score": round(g["gauge_score"], 3), "vote": _vote(g["gauge_score"], 0.15),
             "detail": f"{g.get('article_count')} articles",
             "reason": (g.get("reason") or "")[:300],
-            "headlines": _headline_titles(g.get("headlines"), 4),
+            "headlines": _headline_titles(g.get("headlines"), 6),
         })
 
     if rt:
@@ -148,24 +148,27 @@ _COUNTRIES = {"us", "usa", "united states", "gb", "uk", "gbr", "united kingdom"}
 
 
 def _calendar_context(now: datetime) -> list[dict]:
+    """The calendar feed is only a schedule of the big dates (Fed, BoE, NFP,
+    FOMC minutes) -- no CPI, no forecasts, actual/estimate normally empty. So
+    this is UPCOMING EVENT RISK (plus any release that does carry an actual),
+    not a surprise source; surprises come from the headlines."""
     events = []
     for e in db.get_calendar_events():
         t = _parse_time(e["time"])
-        if t is None or not (now - timedelta(hours=10) <= t <= now + timedelta(hours=24)):
+        if t is None or str(e.get("country", "")).strip().lower() not in _COUNTRIES:
             continue
-        if str(e.get("country", "")).strip().lower() not in _COUNTRIES:
+        if not (now - timedelta(hours=10) <= t <= now + timedelta(days=30)):
             continue
+        hours = round((t - now).total_seconds() / 3600, 1)
         events.append({
-            "time": t.strftime("%a %H:%M UTC"), "country": e["country"], "event": e["event"],
-            "impact": e["impact"], "actual": e["actual"], "forecast": e["estimate"], "previous": e["prev"],
-            "_t": t, "_high": "high" in str(e["impact"]).lower() or str(e["impact"]).strip() == "3",
+            "event": e["event"], "country": e["country"], "impact": e["impact"],
+            "when_utc": t.strftime("%a %d %b %H:%M"), "hours_from_now": hours,
+            "actual": e["actual"], "forecast": e["estimate"], "previous": e["prev"], "_t": t,
         })
-    events.sort(key=lambda x: (not x["_high"], x["_t"]))
-    events = events[:14]
     events.sort(key=lambda x: x["_t"])
+    events = events[:6]
     for ev in events:
         ev.pop("_t")
-        ev.pop("_high")
     return events
 
 
@@ -214,10 +217,11 @@ def _fingerprint(inputs: dict) -> str:
 
 PROMPT = """You are a macro analyst giving ONE call on GBPUSD (British pound vs US dollar) for an automated Renko trading system. It will only take LONG trades if you say bullish, only SHORT trades if you say bearish, and nothing at all if you say neutral.
 
-Below are the system's gauges (positive score = bullish GBPUSD, negative = bearish GBPUSD), the recent/upcoming economic calendar with forecast vs actual, and what price has actually been doing.
+Below are the system's gauges (positive score = bullish GBPUSD, negative = bearish GBPUSD), the upcoming scheduled events, and what price has actually been doing.
 
 Guidance:
-- SURPRISES matter more than levels. Actual vs forecast is what moves markets: hotter-than-expected US inflation or jobs is typically USD-positive (bearish GBPUSD); a miss is the opposite. Mirror this for UK data. A gauge that scores a data LEVEL can disagree with how the market actually reacted -- trust the surprise and the reaction.
+- SURPRISES matter more than levels. You are NOT given economic forecasts, so read the news headlines for reported surprises and market reactions (e.g. "US CPI hotter than expected", "pound falls after..."). Hotter-than-expected US inflation or jobs is typically USD-positive (bearish GBPUSD); a miss is the opposite. Mirror this for UK data. A gauge that scores a data LEVEL (e.g. momentum) can disagree with how the market actually reacted -- when the headlines say how the market reacted, trust that over the level score.
+- The scheduled-events list is upcoming event risk (e.g. a Fed decision within hours = be cautious), not a source of surprises.
 - COT is weekly positioning and YIELD is a slow level -- they lag. Do not let them outvote fresh, high-impact information.
 - Price is evidence, not a vote: if the fundamentals look one way but price has been trending hard the other way, either the gauges are lagging or the move is not yet priced in -- say neutral unless the fresh information clearly explains the gap.
 - If the evidence is genuinely mixed or there is no clear edge, say neutral. Neutral is a perfectly good answer.
@@ -241,7 +245,7 @@ def _call_llm(inputs: dict) -> dict:
         },
         json={
             "model": llm_client.MODEL,
-            "max_tokens": 400,
+            "max_tokens": 700,
             "messages": [{"role": "user", "content": PROMPT.format(inputs=json.dumps(inputs, indent=1, default=str))}],
         },
         timeout=30,
@@ -256,10 +260,10 @@ def _call_llm(inputs: dict) -> dict:
     if verdict not in ("bullish", "bearish", "neutral"):
         verdict = "neutral"
     conf = max(0.0, min(1.0, float(parsed.get("confidence", 0.0))))
-    drivers = [str(d)[:120] for d in (parsed.get("key_drivers") or [])][:4]
+    drivers = [str(d)[:200] for d in (parsed.get("key_drivers") or [])][:4]
     return {
         "verdict": verdict, "confidence": round(conf, 2),
-        "reason": str(parsed.get("reason", "")).strip()[:400], "key_drivers": drivers,
+        "reason": str(parsed.get("reason", "")).strip()[:700], "key_drivers": drivers,
     }
 
 
