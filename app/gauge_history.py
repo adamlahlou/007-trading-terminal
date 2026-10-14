@@ -100,6 +100,31 @@ class GaugeHistory:
         self._rate_tone_cache[most_recent] = score
         return score
 
+    def _decision_score(self, bank: str, meeting_date) -> float | None:
+        key = (bank, meeting_date)
+        if key in self._rate_tone_cache:
+            return self._rate_tone_cache[key]
+        try:
+            statement_text = rate_tone_client.fetch_statement_text(bank, meeting_date)
+            result = rate_tone_client.interpret_rate_statement(bank, statement_text)
+            # Fed hawkish -> GBPUSD bearish (inverted); BoE hawkish -> bullish (direct).
+            score = -result["score"] if bank == "Fed" else result["score"]
+        except Exception:
+            score = None
+        self._rate_tone_cache[key] = score
+        return score
+
+    def rate_tone_blended_score(self, target_date: str) -> float | None:
+        """Mirror of the Rate Tone panel: the average of the latest Fed and
+        latest BoE decision on or before the date (whichever exist)."""
+        target = datetime.strptime(target_date[:10], "%Y-%m-%d").date()
+        latest = {}
+        for bank, meeting_date in self._all_decisions:
+            if meeting_date <= target and (bank not in latest or meeting_date > latest[bank]):
+                latest[bank] = meeting_date
+        scores = [s for s in (self._decision_score(b, d) for b, d in latest.items()) if s is not None]
+        return sum(scores) / len(scores) if scores else None
+
     def _week_bucket(self, target_date: str) -> tuple[date, date]:
         target = datetime.strptime(target_date[:10], "%Y-%m-%d").date()
         days_since_start = max(0, (target - self._history_start).days)
@@ -267,10 +292,9 @@ class GaugeHistory:
             votes["cot"] = 1 if c > 0.1 else (-1 if c < -0.1 else 0)
 
         m = self.momentum_score(target_date)
-        rt = self.rate_tone_score(target_date)
+        rt = self.rate_tone_blended_score(target_date)  # one blended Fed+BoE reading, like the panel
         if m is not None:
-            blended = (m + rt) / 2 if rt is not None else m
-            votes["momentum"] = 1 if blended > 0.15 else (-1 if blended < -0.15 else 0)
+            votes["momentum"] = 1 if m > 0.15 else (-1 if m < -0.15 else 0)  # standalone, like the panel
 
         geo = self.geopolitical_score(target_date)
         if geo is not None:

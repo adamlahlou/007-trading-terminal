@@ -9,7 +9,7 @@ can show a dot at exactly the right spot.
 Entry rule: NO entry is taken -- fresh from flat, a same-direction
 continuation, or even a genuine reversal brick -- unless the OVERALL
 macro verdict across every available gauge (yield, news, COT, momentum
-blended with rate tone, geo, rate tone standalone) agrees with that
+standalone, geo, blended Fed+BoE rate tone) agrees with that
 direction, by strict majority. A tied/mixed verdict blocks ALL entries,
 long or short -- this is the exact same majority rule the macro badge
 uses, so the live badge and the live gate can never show one thing while
@@ -33,8 +33,8 @@ def _current_gauge_votes() -> dict:
     actual current gauge state instead of a historical reconstruction, but
     mirrors the SAME 6 slots and SAME per-gauge thresholds the macro badge
     actually displays with (yield/cot at 0.1, news/geo/momentum-blend/
-    rate_tone at 0.15, momentum blended with rate tone exactly like the
-    "Past Macro News" panel). Deliberately NOT a flat/uniform threshold --
+    rate_tone at 0.15; momentum standalone and rate tone one blended
+    Fed+BoE reading, exactly like the panels). Deliberately NOT a flat/uniform threshold --
     that mismatch between the badge and the gate is exactly what was wrong
     before."""
     votes = {}
@@ -55,19 +55,18 @@ def _current_gauge_votes() -> dict:
         votes["cot"] = 1 if s > 0.1 else (-1 if s < -0.1 else 0)
 
     momentum_state = db.get_momentum_state()
-    rate_tone_state = db.get_rate_tone_state()  # Fed only -- the only one actually shown live
     if momentum_state:
-        m = momentum_state["gauge_score"]
-        blended = (m + rate_tone_state["gauge_score"]) / 2 if rate_tone_state else m
-        votes["momentum"] = 1 if blended > 0.15 else (-1 if blended < -0.15 else 0)
+        m = momentum_state["gauge_score"]  # standalone, exactly like the US Data Trend panel
+        votes["momentum"] = 1 if m > 0.15 else (-1 if m < -0.15 else 0)
 
     geo_state = db.get_geo_state()
     if geo_state:
         s = geo_state["gauge_score"]
         votes["geo"] = 1 if s > 0.15 else (-1 if s < -0.15 else 0)
 
-    if rate_tone_state:
-        s = rate_tone_state["gauge_score"]
+    rt_scores = [st["gauge_score"] for st in (db.get_rate_tone_state(), db.get_boe_rate_tone_state()) if st]
+    if rt_scores:
+        s = sum(rt_scores) / len(rt_scores)  # ONE blended Fed+BoE reading, exactly like the Rate Tone panel
         votes["rate_tone"] = 1 if s > 0.15 else (-1 if s < -0.15 else 0)
 
     return votes

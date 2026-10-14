@@ -72,7 +72,8 @@ def _headline_titles(raw, limit=5):
 
 def _gauge_snapshot() -> list[dict]:
     """The same 6 slots, same thresholds as the badge (yield/cot 0.1,
-    everything else 0.15, momentum blended with Fed rate tone), plus the
+    everything else 0.15; momentum standalone, rate tone one blended Fed+BoE
+    reading -- exactly the panels), plus the
     reasons so the model can read the substance, not just the numbers."""
     gauges = []
 
@@ -100,12 +101,10 @@ def _gauge_snapshot() -> list[dict]:
         })
 
     m = db.get_momentum_state()
-    rt = db.get_rate_tone_state()
     if m:
-        blended = (m["gauge_score"] + rt["gauge_score"]) / 2 if rt else m["gauge_score"]
         gauges.append({
-            "name": "momentum", "score": round(blended, 3), "vote": _vote(blended, 0.15),
-            "detail": f"US CPI YoY {m.get('cpi_yoy')} ({m.get('cpi_date')}), NFP change {m.get('nfp_change')} ({m.get('nfp_date')}); raw momentum score {round(m['gauge_score'], 3)} blended with Fed tone",
+            "name": "momentum", "score": round(m["gauge_score"], 3), "vote": _vote(m["gauge_score"], 0.15),
+            "detail": f"US data trend (levels, not surprises): CPI YoY {m.get('cpi_yoy')} ({m.get('cpi_date')}), NFP change {m.get('nfp_change')} ({m.get('nfp_date')})",
             "reason": (m.get("reason") or "")[:300],
         })
 
@@ -118,20 +117,16 @@ def _gauge_snapshot() -> list[dict]:
             "headlines": _headline_titles(g.get("headlines"), 6),
         })
 
-    if rt:
-        gauges.append({
-            "name": "rate_tone", "score": round(rt["gauge_score"], 3), "vote": _vote(rt["gauge_score"], 0.15),
-            "detail": f"Fed, meeting {rt.get('meeting_date')}",
-            "reason": (rt.get("reason") or "")[:300],
-        })
-
+    fed = db.get_rate_tone_state()
     boe = db.get_boe_rate_tone_state()
-    if boe:
-        # Context only -- not one of the 6 voting slots.
+    banks = [(name, st) for name, st in (("Fed", fed), ("BoE", boe)) if st]
+    if banks:
+        score = sum(st["gauge_score"] for _, st in banks) / len(banks)
         gauges.append({
-            "name": "boe_rate_tone (context only, no vote)", "score": round(boe["gauge_score"], 3), "vote": None,
-            "detail": f"BoE, meeting {boe.get('meeting_date')}",
-            "reason": (boe.get("reason") or "")[:300],
+            "name": "rate_tone", "score": round(score, 3), "vote": _vote(score, 0.15),
+            "detail": "one blended reading: " + "; ".join(
+                f"{name} {round(st['gauge_score'], 3)} (meeting {st.get('meeting_date')})" for name, st in banks),
+            "reason": " | ".join(f"{name}: {(st.get('reason') or '')[:220]}" for name, st in banks),
         })
     return gauges
 
