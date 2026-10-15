@@ -641,15 +641,22 @@ def research_dump(start_date: str, end_date: str, warmup_days: int = 14) -> dict
     end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     candles = _load_candles(start - timedelta(days=warmup_days), end)
     gh = GaugeHistory(start.date(), end.date())
-    votes, d = {}, start
+    votes, scores, d = {}, {}, start
     while d <= end:
         iso = d.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
         votes[d.date().isoformat()] = gh.badge_votes_as_of(iso)
+        sc = {
+            "yield_spread": gh.yield_score(iso), "cot": gh.cot_score(iso),
+            "momentum": gh.momentum_score(iso), "news": gh.news_score(iso),
+            "geo": gh.geopolitical_score(iso), "rate_tone": gh.rate_tone_blended_score(iso),
+        }
+        scores[d.date().isoformat()] = {k: (round(v, 4) if v is not None else None) for k, v in sc.items()}
         d += timedelta(days=1)
     return {
         "start": start_date, "end": end_date, "warmup_days": warmup_days,
         "anchor": _live_anchor(0.0022),
         "candles": [[c["time"], c["open"], c["high"], c["low"], c["close"]] for c in candles],
         "votes_by_day": votes,
+        "scores_by_day": scores,
         "gauge_coverage": gh.gauge_coverage(start.date(), end.date()),
     }
