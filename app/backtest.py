@@ -401,7 +401,7 @@ def run_backtest(
             result["gauge_coverage"] = gauge_hist.gauge_coverage(start.date(), now.date())
     result["known_limitations"] = [
         "Backtest momentum is a formula on CPI/NFP LEVELS; the live momentum gauge is an LLM reading of the same data. They can disagree.",
-        "UNVERIFIED: CPI / NFP / UK-yield / COT series may be dated by observation period rather than release date, so the backtest may see them days to weeks early (lookahead). Not yet corrected.",
+        "Release lags are applied to the FRED/CFTC series (US yield +1d, UK yield +60d, CPI +45d, NFP +38d, COT +4d) -- approximate and deliberately conservative, not exact release dates.",
         "Gauges are sampled per day; intraday changes (e.g. a CPI print at 13:30) are not reflected until the next day's value.",
         "Small samples: a handful of trades says little. Compare windows, not single numbers.",
     ]

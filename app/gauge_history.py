@@ -18,6 +18,33 @@ from . import db, fred_client, cot_client, rate_tone_client, freenews_client, ll
 from .calendar_schedule import FOMC_DATES_2026, BOE_MPC_DATES_2026
 
 
+# Approximate PUBLICATION lags (days from the period a number covers to when it
+# was actually public). Deliberately on the conservative (late) side. Without
+# these, the backtest "knew" e.g. September CPI on 1 September.
+US_YIELD_LAG_DAYS = 1
+UK_YIELD_LAG_DAYS = 60   # monthly OECD series on FRED, published with a long delay
+CPI_LAG_DAYS = 45        # month-start date; released ~mid next month
+NFP_LAG_DAYS = 38        # month-start date; released first Friday of next month
+COT_LAG_DAYS = 4         # as-of Tuesday; public Friday afternoon
+
+
+def _shift_series(series: list[tuple[float, str]], days: int) -> list[tuple[float, str]]:
+    out = []
+    for value, d in series:
+        shifted = (datetime.strptime(d[:10], "%Y-%m-%d").date() + timedelta(days=days)).isoformat()
+        out.append((value, shifted))
+    return out
+
+
+def _shift_cot(rows: list[dict], days: int) -> list[dict]:
+    out = []
+    for r in rows:
+        r2 = dict(r)
+        r2["report_date"] = (datetime.strptime(r["report_date"][:10], "%Y-%m-%d").date() + timedelta(days=days)).isoformat()
+        out.append(r2)
+    return out
+
+
 def _value_as_of(series: list[tuple[float, str]], target_date: str) -> float | None:
     """series: [(value, date_str)] ascending. Returns the value from the
     most recent entry with date <= target_date, or None if none exists yet."""
@@ -43,14 +70,14 @@ class GaugeHistory:
         end = end_date.isoformat()
 
         yields = fred_client.fetch_yield_history(yield_start, end)
-        self.us_yield_series = yields["us"]
-        self.uk_yield_series = yields["uk"]
+        self.us_yield_series = _shift_series(yields["us"], US_YIELD_LAG_DAYS)
+        self.uk_yield_series = _shift_series(yields["uk"], UK_YIELD_LAG_DAYS)
 
         momentum = fred_client.fetch_momentum_history(momentum_start, end)
-        self.cpi_series = momentum["cpi"]
-        self.nfp_series = momentum["nfp"]
+        self.cpi_series = _shift_series(momentum["cpi"], CPI_LAG_DAYS)
+        self.nfp_series = _shift_series(momentum["nfp"], NFP_LAG_DAYS)
 
-        self.cot_series = cot_client.fetch_cot_history(cot_start, end)
+        self.cot_series = _shift_cot(cot_client.fetch_cot_history(cot_start, end), COT_LAG_DAYS)
 
         # Rate tone: NOT eagerly fetched (unlike the others) -- each real
         # meeting needs a slow real fetch + LLM call, so we only do that
