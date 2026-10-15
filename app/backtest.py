@@ -22,6 +22,7 @@ Honest limitations (worth knowing before trusting the numbers):
   - 52 pips is used as a single fixed number for a clean test
 """
 from __future__ import annotations
+import os
 from datetime import datetime, timedelta, timezone
 from . import oanda_client
 from .renko import RenkoState, process_candle
@@ -383,6 +384,27 @@ def run_backtest(
     result["window"] = f"{start.date().isoformat()} to {now.date().isoformat()}"
     result["gauge_set"] = gauge_set
     result["macro_exit"] = macro_exit
+
+    # ---- provenance: what exactly was tested, on which code ----
+    if gauge_set == "all_gauges_badge":
+        result["mode"] = result["mode"].replace(f"gate_all_entries_{gate_threshold}of3", "gate_all_entries_macro_majority")
+    result["mode"] = f'{result["mode"]}__gauges_{gauge_set}'
+    result["commit"] = os.environ.get("RENDER_GIT_COMMIT", "unknown")[:7]
+    if gauge_set == "all_gauges_badge":
+        result["definition"] = (
+            "Majority vote over 6 slots, tie = no entry. yield (spread/1.5) and cot: +-0.1; "
+            "news, momentum, geo, rate_tone: +-0.15. momentum is the STANDALONE US-data score; "
+            "rate_tone is one blended reading = mean(latest Fed, latest BoE). "
+            "news/geo come from the PRIOR calendar week's headlines (Monday-aligned) and are cached."
+        )
+        if gauge_hist is not None:
+            result["gauge_coverage"] = gauge_hist.gauge_coverage(start.date(), now.date())
+    result["known_limitations"] = [
+        "Backtest momentum is a formula on CPI/NFP LEVELS; the live momentum gauge is an LLM reading of the same data. They can disagree.",
+        "UNVERIFIED: CPI / NFP / UK-yield / COT series may be dated by observation period rather than release date, so the backtest may see them days to weeks early (lookahead). Not yet corrected.",
+        "Gauges are sampled per day; intraday changes (e.g. a CPI print at 13:30) are not reflected until the next day's value.",
+        "Small samples: a handful of trades says little. Compare windows, not single numbers.",
+    ]
     if gauge_samples is not None:
         result["gauge_samples"] = gauge_samples
     return result

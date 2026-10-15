@@ -249,6 +249,17 @@ def init_db():
         )
         """
     )
+    # Cache of LLM-derived backtest reconstructions (news / geo / rate tone),
+    # so re-running the same window gives the same answer.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS backtest_cache (
+            key TEXT PRIMARY KEY,
+            value REAL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -713,3 +724,23 @@ def get_macro_llm_log(limit: int = 100, include_inputs: bool = False) -> list[di
     rows = conn.execute("SELECT * FROM macro_llm_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
     return [_macro_llm_row(r, include_inputs) for r in reversed(rows)]
+
+
+
+def get_backtest_cache(key: str):
+    """Returns {"value": float} if cached, else None."""
+    conn = get_conn()
+    row = conn.execute("SELECT value FROM backtest_cache WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return {"value": row["value"]} if row else None
+
+
+def set_backtest_cache(key: str, value: float):
+    from datetime import datetime, timezone
+    conn = get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO backtest_cache (key, value, created_at) VALUES (?, ?, ?)",
+        (key, value, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()

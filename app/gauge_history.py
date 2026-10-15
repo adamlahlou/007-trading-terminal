@@ -14,7 +14,7 @@ it couldn't have known yet, which would make the results meaningless.
 """
 from __future__ import annotations
 from datetime import date, timedelta, datetime
-from . import fred_client, cot_client, rate_tone_client, freenews_client, llm_client
+from . import db, fred_client, cot_client, rate_tone_client, freenews_client, llm_client
 from .calendar_schedule import FOMC_DATES_2026, BOE_MPC_DATES_2026
 
 
@@ -104,6 +104,10 @@ class GaugeHistory:
         key = (bank, meeting_date)
         if key in self._rate_tone_cache:
             return self._rate_tone_cache[key]
+        cached = db.get_backtest_cache(f"rate:v1:{bank}:{meeting_date}")
+        if cached is not None:
+            self._rate_tone_cache[key] = cached["value"]
+            return cached["value"]
         try:
             statement_text = rate_tone_client.fetch_statement_text(bank, meeting_date)
             result = rate_tone_client.interpret_rate_statement(bank, statement_text)
@@ -112,6 +116,8 @@ class GaugeHistory:
         except Exception:
             score = None
         self._rate_tone_cache[key] = score
+        if score is not None:
+            db.set_backtest_cache(f"rate:v1:{bank}:{meeting_date}", score)
         return score
 
     def rate_tone_blended_score(self, target_date: str) -> float | None:
@@ -125,13 +131,59 @@ class GaugeHistory:
         scores = [s for s in (self._decision_score(b, d) for b, d in latest.items()) if s is not None]
         return sum(scores) / len(scores) if scores else None
 
+    def gauge_coverage(self, start: date, end: date) -> dict:
+        """Per gauge, over the window: how many days had data, how many
+        DISTINCT values it took, its range, and % of days bullish/bearish at
+        the badge threshold. A gauge stuck on one value, or missing for part
+        of the window, is flagged -- so a result can't silently rest on it."""
+        thresholds = {"yield": 0.1, "cot": 0.1, "news": 0.15, "momentum": 0.15, "geo": 0.15, "rate_tone": 0.15}
+        raw = {name: [] for name in thresholds}
+        total_days = 0
+        d = start
+        while d <= end:
+            iso = d.isoformat()
+            total_days += 1
+            y = self.yield_score(iso)
+            day = {
+                "yield": None if y is None else y / 1.5,
+                "news": self.news_score(iso), "cot": self.cot_score(iso),
+                "momentum": self.momentum_score(iso), "geo": self.geopolitical_score(iso),
+                "rate_tone": self.rate_tone_blended_score(iso),
+            }
+            for name, v in day.items():
+                raw[name].append(v)
+            d += timedelta(days=1)
+        report = {}
+        for name, vals in raw.items():
+            have = [v for v in vals if v is not None]
+            th = thresholds[name]
+            distinct = len({round(v, 4) for v in have})
+            if not have:
+                warning = "NO DATA"
+            elif distinct == 1 and len(have) > 7:
+                warning = "FLAT: one single value for the whole window"
+            elif len(have) < total_days:
+                warning = f"missing on {total_days - len(have)} days"
+            else:
+                warning = None
+            report[name] = {
+                "days_with_data": f"{len(have)}/{total_days}",
+                "distinct_values": distinct,
+                "min": round(min(have), 3) if have else None,
+                "max": round(max(have), 3) if have else None,
+                "pct_days_bullish": round(100 * sum(1 for v in have if v > th) / len(have)) if have else None,
+                "pct_days_bearish": round(100 * sum(1 for v in have if v < -th) / len(have)) if have else None,
+                "warning": warning,
+            }
+        return report
+
     def _week_bucket(self, target_date: str) -> tuple[date, date]:
+        """Calendar weeks (Monday-aligned), NOT anchored to the backtest's
+        start date -- so a given date always lands in the same bucket (and
+        the same cached score) whatever window is being tested."""
         target = datetime.strptime(target_date[:10], "%Y-%m-%d").date()
-        days_since_start = max(0, (target - self._history_start).days)
-        bucket_index = days_since_start // 7
-        bucket_start = self._history_start + timedelta(days=bucket_index * 7)
-        bucket_end = bucket_start + timedelta(days=7)
-        return bucket_start, bucket_end
+        bucket_start = target - timedelta(days=target.weekday())
+        return bucket_start, bucket_start + timedelta(days=7)
 
     def geopolitical_score(self, target_date: str) -> float | None:
         """Weekly-bucketed real historical reconstruction -- fetches real
@@ -140,9 +192,15 @@ class GaugeHistory:
         bucket_start, bucket_end = self._week_bucket(target_date)
         if bucket_start in self._geo_cache:
             return self._geo_cache[bucket_start]
+        cached = db.get_backtest_cache(f"geo:v2:{bucket_start}")
+        if cached is not None:
+            self._geo_cache[bucket_start] = cached["value"]
+            return cached["value"]
         try:
-            published_after = bucket_start.strftime("%Y-%m-%dT00:00:00Z")
-            published_before = bucket_end.strftime("%Y-%m-%dT00:00:00Z")
+            # PRIOR week's headlines only: using this week's own headlines for
+            # every day in it would let Monday "know" Friday's news.
+            published_after = (bucket_start - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+            published_before = bucket_start.strftime("%Y-%m-%dT00:00:00Z")
             headlines = freenews_client.fetch_geopolitical_headlines_range(published_after, published_before)
             self._geo_article_counts[bucket_start] = len(headlines)
             result = llm_client.interpret_geopolitical_headlines(headlines)
@@ -150,6 +208,8 @@ class GaugeHistory:
         except Exception:
             score = None  # a fetch/parse failure shouldn't crash the whole backtest
         self._geo_cache[bucket_start] = score
+        if score is not None:
+            db.set_backtest_cache(f"geo:v2:{bucket_start}", score)
         return score
 
     def geo_article_count(self, target_date: str) -> int | None:
@@ -167,9 +227,14 @@ class GaugeHistory:
         bucket_start, bucket_end = self._week_bucket(target_date)
         if bucket_start in self._news_cache:
             return self._news_cache[bucket_start]
+        cached = db.get_backtest_cache(f"news:v2:{bucket_start}")
+        if cached is not None:
+            self._news_cache[bucket_start] = cached["value"]
+            return cached["value"]
         try:
-            published_after = bucket_start.strftime("%Y-%m-%dT00:00:00Z")
-            published_before = bucket_end.strftime("%Y-%m-%dT00:00:00Z")
+            # PRIOR week's headlines only (see geopolitical_score).
+            published_after = (bucket_start - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+            published_before = bucket_start.strftime("%Y-%m-%dT00:00:00Z")
             headlines = freenews_client.fetch_gbp_usd_headlines_range(published_after, published_before)
             self._news_article_counts[bucket_start] = {
                 "gbp": len(headlines["gbp"]), "usd": len(headlines["usd"]),
@@ -181,6 +246,8 @@ class GaugeHistory:
         except Exception:
             score = None
         self._news_cache[bucket_start] = score
+        if score is not None:
+            db.set_backtest_cache(f"news:v2:{bucket_start}", score)
         return score
 
     def news_article_counts(self, target_date: str) -> dict | None:
