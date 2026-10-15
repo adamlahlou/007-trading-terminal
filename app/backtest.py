@@ -131,6 +131,8 @@ def run_backtest(
     debug_gauges: bool = False,
     gauge_set: str = "yield_cot_momentum",
     macro_exit: bool = False,
+    spread_pips: float = 1.0,
+    warmup_days: int = 14,
 ) -> dict:
     """
     start_date/end_date (YYYY-MM-DD): test a SPECIFIC historical window
@@ -187,9 +189,11 @@ def run_backtest(
         now = datetime.now(timezone.utc)
         start = now - timedelta(days=days)
 
-    candles = oanda_client.fetch_candles(since=start, until=now, granularity="M15")
+    candles = _load_candles(start - timedelta(days=warmup_days), now)
     if not candles:
         raise RuntimeError("No candles returned for the requested backtest window")
+    start_iso = start.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+    live_anchor = _live_anchor(box_size)
 
     gauge_hist = None
     if (require_reversal_to_reenter and continuation_override) or gate_all_entries:
@@ -219,7 +223,7 @@ def run_backtest(
             gauge_samples.append({"date": sample_date.date().isoformat(), "votes": votes, "raw_scores": raw_scores})
             sample_date += timedelta(days=3)
 
-    state = RenkoState(box_size=box_size)
+    state = RenkoState(box_size=box_size, anchor=live_anchor)
     initial_stop_dist = INITIAL_STOP_PIPS * PIP
 
     position = None  # None, 1 (long), or -1 (short)
@@ -232,6 +236,7 @@ def run_backtest(
     def close_trade(exit_price, exit_time, reason):
         nonlocal position, entry_price, stop_price, favorable_bricks, last_closed_direction
         pips = (exit_price - entry_price) / PIP if position == 1 else (entry_price - exit_price) / PIP
+        pips -= spread_pips  # round-trip spread cost
         trades.append({
             "direction": "long" if position == 1 else "short",
             "entry_price": round(entry_price, 5),
@@ -258,6 +263,10 @@ def run_backtest(
         return _continuation_allowed(votes, direction, "majority", gate_threshold)
 
     for candle in candles:
+        if candle["time"] < start_iso:
+            # warm-up: build the Renko state only, never trade
+            process_candle(state, candle)
+            continue
         # 1) Check if the currently open position would have been stopped
         # out during this candle, BEFORE processing any new bricks from it.
         if position == 1 and candle["low"] <= stop_price:
@@ -384,6 +393,8 @@ def run_backtest(
     result["window"] = f"{start.date().isoformat()} to {now.date().isoformat()}"
     result["gauge_set"] = gauge_set
     result["macro_exit"] = macro_exit
+    result["spread_pips"] = spread_pips
+    result["renko_grid"] = {"anchor": live_anchor, "source": "live engine_state" if live_anchor is not None else "first candle (no live anchor found)", "warmup_days": warmup_days}
 
     # ---- provenance: what exactly was tested, on which code ----
     if gauge_set == "all_gauges_badge":
@@ -404,6 +415,8 @@ def run_backtest(
         "Release lags are applied to the FRED/CFTC series (US yield +1d, UK yield +60d, CPI +45d, NFP +38d, COT +4d) -- approximate and deliberately conservative, not exact release dates.",
         "Gauges are sampled per day; intraday changes (e.g. a CPI print at 13:30) are not reflected until the next day's value.",
         "Small samples: a handful of trades says little. Compare windows, not single numbers.",
+        "Fills: stops fill at the exact stop price (no slippage); a flat spread_pips is charged per trade; prices are OANDA mid.",
+        "Intra-candle order is assumed (O-L-H-C or O-H-L-C) from M15 bars, same as the live engine.",
     ]
     if gauge_samples is not None:
         result["gauge_samples"] = gauge_samples
@@ -560,4 +573,83 @@ def _summarize(trades: list[dict], days: int, require_reversal_to_reenter: bool,
         "profit_factor": profit_factor,
         "max_drawdown_pips": round(max_dd, 1),
         "trades": trades,
+    }
+
+
+# ---------------------------------------------------------------- reliability helpers
+def _load_candles(since, until) -> list[dict]:
+    """M15 candles, oldest first, with duplicates (25-day chunk boundaries) removed."""
+    raw = oanda_client.fetch_candles(since=since, until=until, granularity="M15")
+    seen, out = set(), []
+    for c in sorted(raw, key=lambda c: c["time"]):
+        if c["time"] in seen:
+            continue
+        seen.add(c["time"])
+        out.append(c)
+    return out
+
+
+def _live_anchor(box_size: float):
+    """The live terminal's Renko grid anchor (bricks sit at anchor + k*box)."""
+    try:
+        from . import db
+        return db.load_state(box_size).get("anchor")
+    except Exception:
+        return None
+
+
+def brick_parity(days: int = 30, box_size: float = 0.0022, warmup_days: int = 14) -> dict:
+    """Do the backtest's bricks equal the bricks the live terminal stored?"""
+    from . import db
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+    start_iso = start.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+    candles = _load_candles(start - timedelta(days=warmup_days), now)
+    if not candles:
+        raise RuntimeError("No candles returned")
+    last_t = candles[-1]["time"]
+    anchor = _live_anchor(box_size)
+    state = RenkoState(box_size=box_size, anchor=anchor)
+    bt = []
+    for c in candles:
+        for b in process_candle(state, c):
+            if start_iso <= b.formed_at <= last_t:
+                bt.append((b.formed_at, b.direction, round(b.close, 5)))
+    live = [(b["formed_at"], b["direction"], round(b["close"], 5))
+            for b in db.get_recent_bricks(5000) if start_iso <= b["formed_at"] <= last_t]
+    exact = set(bt) & set(live)
+    levels_bt = {(d, c) for _, d, c in bt}
+    levels_live = {(d, c) for _, d, c in live}
+    return {
+        "window": f"{start.date()} to {now.date()}",
+        "anchor_used": anchor,
+        "live_bricks": len(live),
+        "backtest_bricks": len(bt),
+        "exact_matches_time_dir_price": len(exact),
+        "same_price_levels_and_direction": len(levels_bt & levels_live),
+        "match_pct_of_live": round(len(exact) / len(live) * 100, 1) if live else None,
+        "live_only_first5": sorted(set(live) - set(bt))[:5],
+        "backtest_only_first5": sorted(set(bt) - set(live))[:5],
+        "verdict": "PASS" if live and len(exact) / len(live) >= 0.95 and abs(len(live) - len(bt)) <= 2 else "CHECK",
+    }
+
+
+def research_dump(start_date: str, end_date: str, warmup_days: int = 14) -> dict:
+    """Everything the backtest sees, as data: warm-up + window candles and the
+    exact per-day gauge votes the all_gauges_badge gate would use."""
+    start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    candles = _load_candles(start - timedelta(days=warmup_days), end)
+    gh = GaugeHistory(start.date(), end.date())
+    votes, d = {}, start
+    while d <= end:
+        iso = d.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+        votes[d.date().isoformat()] = gh.badge_votes_as_of(iso)
+        d += timedelta(days=1)
+    return {
+        "start": start_date, "end": end_date, "warmup_days": warmup_days,
+        "anchor": _live_anchor(0.0022),
+        "candles": [[c["time"], c["open"], c["high"], c["low"], c["close"]] for c in candles],
+        "votes_by_day": votes,
+        "gauge_coverage": gh.gauge_coverage(start.date(), end.date()),
     }
