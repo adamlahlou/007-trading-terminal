@@ -71,7 +71,9 @@ class GaugeHistory:
 
         yields = fred_client.fetch_yield_history(yield_start, end)
         self.us_yield_series = _shift_series(yields["us"], US_YIELD_LAG_DAYS)
-        self.uk_yield_series = _shift_series(yields["uk"], UK_YIELD_LAG_DAYS)
+        # BoE daily data is public next working day; the FRED/OECD monthly fallback lags ~60 days.
+        uk_lag = UK_YIELD_LAG_DAYS if yields.get("uk_source", "fred") == "fred" else US_YIELD_LAG_DAYS
+        self.uk_yield_series = _shift_series(yields["uk"], uk_lag)
 
         momentum = fred_client.fetch_momentum_history(momentum_start, end)
         self.cpi_series = _shift_series(momentum["cpi"], CPI_LAG_DAYS)

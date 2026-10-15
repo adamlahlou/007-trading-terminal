@@ -6,6 +6,7 @@ data source, no paid tier gating like the calendar vendors we hit earlier.
 from __future__ import annotations
 import os
 import requests
+from . import boe_client
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY")
 BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
@@ -50,7 +51,12 @@ def fetch_yield_differential() -> dict:
     GBP-supportive; negative = US yields higher, generally GBP-negative).
     """
     us = _fetch_latest(US_10Y_SERIES)
-    uk = _fetch_latest(UK_10Y_SERIES)
+    # Daily Bank of England gilt yield first; the monthly OECD series on FRED
+    # (months stale) only as a fallback if the BoE fetch fails.
+    try:
+        uk = boe_client.fetch_uk_10y_latest()
+    except Exception:
+        uk = _fetch_latest(UK_10Y_SERIES)
     if us is None or uk is None:
         raise RuntimeError("Could not fetch one or both yield series from FRED")
 
@@ -121,10 +127,14 @@ def _fetch_range(series_id: str, start_date: str, end_date: str) -> list[tuple[f
 def fetch_yield_history(start_date: str, end_date: str) -> dict:
     """Returns {us: [(value,date)], uk: [(value,date)]} for reconstructing
     the yield spread at any point in the range."""
-    return {
-        "us": _fetch_range(US_10Y_SERIES, start_date, end_date),
-        "uk": _fetch_range(UK_10Y_SERIES, start_date, end_date),
-    }
+    us = _fetch_range(US_10Y_SERIES, start_date, end_date)
+    try:
+        uk = boe_client.fetch_uk_10y_history(start_date, end_date)
+        uk_source = "boe"
+    except Exception:
+        uk = _fetch_range(UK_10Y_SERIES, start_date, end_date)
+        uk_source = "fred"
+    return {"us": us, "uk": uk, "uk_source": uk_source}
 
 
 def fetch_momentum_history(start_date: str, end_date: str) -> dict:
