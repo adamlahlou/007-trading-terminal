@@ -102,6 +102,38 @@ async function loadMacroLlm() {
 loadMacroLlm();
 setInterval(loadMacroLlm, 60000);
 
+async function loadChangeGauges() {
+  try {
+    const badge = document.getElementById('macro-badge');
+    if (!badge) return;
+    const r = await fetch('/api/change-gauges');
+    const d = await r.json();
+    let el = document.getElementById('change-gauges-badge');
+    if (!el) {
+      el = document.createElement('span');
+      el.id = 'change-gauges-badge';
+      el.style.marginLeft = '14px';
+      el.style.fontSize = '0.8em';
+      const anchor = document.getElementById('macro-llm-badge') || badge;
+      anchor.insertAdjacentElement('afterend', el);
+    }
+    if (!d || !d.verdict) { el.textContent = ''; return; }
+    const color = d.verdict === 'bullish' ? 'var(--white)' : d.verdict === 'bearish' ? 'var(--blue)' : 'var(--amber)';
+    el.textContent = `CHANGE: ${d.verdict.toUpperCase()} ${d.bull}-${d.bear}` + (d.gate_source === 'change' ? ' · GATING' : '');
+    el.style.color = color;
+    const v = d.votes || {}, x = d.detail || {};
+    const arrow = (n) => n > 0 ? 'bullish' : n < 0 ? 'bearish' : 'no change';
+    const fmt = (o) => (o && o.now != null && o.prev != null) ? `${o.prev} -> ${o.now}` : 'no data';
+    el.title = `Change-based gauges (what has moved, not the level)\n` +
+      `COT (14d): ${v.cot != null ? arrow(v.cot) : 'n/a'}  [${fmt(x.cot)}]\n` +
+      `Rate tone (30d): ${v.rate_tone != null ? arrow(v.rate_tone) : 'n/a'}  [${fmt(x.rate_tone)}]\n` +
+      `News: ${v.news != null ? arrow(v.news) : 'n/a'}  [${x.news}]\n` +
+      `Geo: ${v.geo != null ? arrow(v.geo) : 'n/a'}  [${x.geo}]`;
+  } catch (e) { /* display only -- never break the page */ }
+}
+loadChangeGauges();
+setInterval(loadChangeGauges, 300000);
+
 function drawBricks() {
   const { bricks, livePrice, boxSize } = state;
   const canvas = document.getElementById('renko');

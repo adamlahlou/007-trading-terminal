@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from . import oanda_client
 from .renko import RenkoState, process_candle
 from .gauge_history import GaugeHistory, macro_verdict
+from . import macro_replay
 
 PIP = 0.0001
 INITIAL_STOP_PIPS = 52
@@ -84,6 +85,11 @@ def _get_votes(gauge_hist, at_time: str, gauge_set: str) -> dict:
         # or disagreeing both correctly block the trade.
         votes = gauge_hist.votes_as_of(at_time, include_rate_tone=True)
         return {k: v for k, v in votes.items() if k == "rate_tone"}
+    if gauge_set == "change_gauges":
+        return gauge_hist.change_votes_as_of(at_time)
+    if gauge_set == "ai_verdict":
+        v = macro_replay.cached_vote(at_time)
+        return {} if v is None else {"ai": v}
     if gauge_set == "all_gauges_badge":
         # Built directly from Adam's explicit instruction: the entry gate
         # should match "the top" (the macro badge) exactly -- majority
@@ -133,6 +139,9 @@ def run_backtest(
     macro_exit: bool = False,
     spread_pips: float = 1.0,
     warmup_days: int = 14,
+    exit_mode: str = "system",
+    stop_pips: float = INITIAL_STOP_PIPS,
+    entry_type: str = "any",
 ) -> dict:
     """
     start_date/end_date (YYYY-MM-DD): test a SPECIFIC historical window
@@ -224,13 +233,14 @@ def run_backtest(
             sample_date += timedelta(days=3)
 
     state = RenkoState(box_size=box_size, anchor=live_anchor)
-    initial_stop_dist = INITIAL_STOP_PIPS * PIP
+    initial_stop_dist = stop_pips * PIP
 
     position = None  # None, 1 (long), or -1 (short)
     entry_price = None
     stop_price = None
     favorable_bricks = 0
     last_closed_direction = None
+    last_brick_dir = None  # direction of the previous brick (warm-up included)
     trades = []
 
     def close_trade(exit_price, exit_time, reason):
@@ -255,7 +265,7 @@ def run_backtest(
         if gauge_hist is None:
             return True
         votes = _get_votes(gauge_hist, at_time, gauge_set)
-        if gauge_set == "all_gauges_badge":
+        if gauge_set in ("all_gauges_badge", "ai_verdict", "change_gauges"):
             # Macro-verdict matching, not a fixed "N of M" threshold --
             # mixed (tied) votes return 0, which matches neither +1 nor -1,
             # so no entry is taken at all while the top reads mixed.
@@ -265,7 +275,8 @@ def run_backtest(
     for candle in candles:
         if candle["time"] < start_iso:
             # warm-up: build the Renko state only, never trade
-            process_candle(state, candle)
+            for _b in process_candle(state, candle):
+                last_brick_dir = _b.direction
             continue
         # 1) Check if the currently open position would have been stopped
         # out during this candle, BEFORE processing any new bricks from it.
@@ -279,7 +290,10 @@ def run_backtest(
 
         # 3) Walk each newly formed brick (already in correct path order)
         for b in new_bricks:
+            prev_dir, last_brick_dir = last_brick_dir, b.direction
             if position is None:
+                if entry_type == "reversal" and not (prev_dir is not None and prev_dir != b.direction):
+                    continue  # only enter on a brick that reverses the previous direction
                 blocked = (
                     require_reversal_to_reenter
                     and last_closed_direction is not None
@@ -299,6 +313,8 @@ def run_backtest(
                 favorable_bricks = 0
             elif b.direction == position:
                 favorable_bricks += 1
+                if exit_mode == "ride":
+                    continue  # ride: the stop never moves
                 if trailing_mode == "breakeven_then_wide":
                     if favorable_bricks == BREAKEVEN_AFTER_BRICKS:
                         stop_price = entry_price  # exactly breakeven, not just "start trailing"
@@ -366,6 +382,8 @@ def run_backtest(
                 # between the tracked stop level (which may already be at
                 # breakeven or the wide trail) and that full 2-box point --
                 # price would realistically have hit the tighter of the two first.
+                if exit_mode in ("ride", "ride_trail"):
+                    continue  # ride: a reversal brick does not close the trade, only the stop does
                 exit_price = max(stop_price, b.close) if position == 1 else min(stop_price, b.close)
                 close_trade(exit_price, b.formed_at, "reversal_slip")
                 if gate_all_entries and not gauges_support(b.direction, b.formed_at):
@@ -394,10 +412,18 @@ def run_backtest(
     result["gauge_set"] = gauge_set
     result["macro_exit"] = macro_exit
     result["spread_pips"] = spread_pips
+    if gauge_set == "change_gauges":
+        result["definition"] = (
+            "Majority vote of CHANGE-based gauges: COT change over 14d (+-0.05), blended Fed+BoE rate-tone "
+            "change over 30d (+-0.03), news and geo levels (+-0.15). Yield and momentum are not used. Tie = no entry."
+        )
+    result["exit_mode"] = exit_mode
+    result["entry_type"] = entry_type
+    result["stop_pips"] = stop_pips
     result["renko_grid"] = {"anchor": live_anchor, "source": "live engine_state" if live_anchor is not None else "first candle (no live anchor found)", "warmup_days": warmup_days}
 
     # ---- provenance: what exactly was tested, on which code ----
-    if gauge_set == "all_gauges_badge":
+    if gauge_set in ("all_gauges_badge", "ai_verdict", "change_gauges"):
         result["mode"] = result["mode"].replace(f"gate_all_entries_{gate_threshold}of3", "gate_all_entries_macro_majority")
     result["mode"] = f'{result["mode"]}__gauges_{gauge_set}'
     result["commit"] = os.environ.get("RENDER_GIT_COMMIT", "unknown")[:7]

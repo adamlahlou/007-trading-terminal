@@ -61,7 +61,7 @@ class GaugeHistory:
     """Fetches once, then answers point-in-time lookups cheaply for every
     candle in the backtest without re-fetching."""
 
-    def __init__(self, start_date: date, end_date: date):
+    def __init__(self, start_date: date, end_date: date, light: bool = False):
         # Generous buffers so even the earliest backtest date has enough
         # lookback for YoY (needs ~13mo of CPI) and UK's monthly yield series.
         yield_start = (start_date - timedelta(days=400)).isoformat()
@@ -69,13 +69,14 @@ class GaugeHistory:
         cot_start = (start_date - timedelta(days=30)).isoformat()
         end = end_date.isoformat()
 
-        yields = fred_client.fetch_yield_history(yield_start, end)
+        # light=True (live change-gauges): skip the yield/momentum history, which they don't use.
+        yields = {"us": [], "uk": [], "uk_source": "boe"} if light else fred_client.fetch_yield_history(yield_start, end)
         self.us_yield_series = _shift_series(yields["us"], US_YIELD_LAG_DAYS)
         # BoE daily data is public next working day; the FRED/OECD monthly fallback lags ~60 days.
         uk_lag = UK_YIELD_LAG_DAYS if yields.get("uk_source", "fred") == "fred" else US_YIELD_LAG_DAYS
         self.uk_yield_series = _shift_series(yields["uk"], uk_lag)
 
-        momentum = fred_client.fetch_momentum_history(momentum_start, end)
+        momentum = {"cpi": [], "nfp": []} if light else fred_client.fetch_momentum_history(momentum_start, end)
         self.cpi_series = _shift_series(momentum["cpi"], CPI_LAG_DAYS)
         self.nfp_series = _shift_series(momentum["nfp"], NFP_LAG_DAYS)
 
@@ -400,6 +401,42 @@ class GaugeHistory:
             votes["rate_tone"] = 1 if rt > 0.15 else (-1 if rt < -0.15 else 0)
 
         return votes
+
+    def change_votes_as_of(self, target_date: str) -> dict:
+        """Votes from CHANGE-based gauges (see change_gauges.py)."""
+        d = datetime.strptime(target_date[:10], "%Y-%m-%d").date()
+        prev = lambda n: (d - timedelta(days=n)).isoformat()
+        return change_votes(
+            self.cot_score(target_date), self.cot_score(prev(COT_CHANGE_DAYS)),
+            self.rate_tone_blended_score(target_date), self.rate_tone_blended_score(prev(RATE_CHANGE_DAYS)),
+            self.news_score(target_date), self.geopolitical_score(target_date),
+        )
+
+
+COT_CHANGE_DAYS = 14
+COT_CHANGE_THRESHOLD = 0.05
+RATE_CHANGE_DAYS = 30
+RATE_CHANGE_THRESHOLD = 0.03
+LEVEL_THRESHOLD = 0.15   # news and geo
+
+
+def _cvote(x, threshold):
+    return 1 if x > threshold else (-1 if x < -threshold else 0)
+
+
+def change_votes(cot_now, cot_prev, rate_now, rate_prev, news, geo) -> dict:
+    """Pure function shared by the backtest and the live page, so they cannot differ.
+    A gauge with missing data casts no vote."""
+    votes = {}
+    if cot_now is not None and cot_prev is not None:
+        votes["cot"] = _cvote(round(cot_now, 4) - round(cot_prev, 4), COT_CHANGE_THRESHOLD)
+    if rate_now is not None and rate_prev is not None:
+        votes["rate_tone"] = _cvote(round(rate_now, 4) - round(rate_prev, 4), RATE_CHANGE_THRESHOLD)
+    if news is not None:
+        votes["news"] = _cvote(round(news, 4), LEVEL_THRESHOLD)
+    if geo is not None:
+        votes["geo"] = _cvote(round(geo, 4), LEVEL_THRESHOLD)
+    return votes
 
 
 def macro_verdict(votes: dict) -> int:

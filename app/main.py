@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from contextlib import asynccontextmanager
 
 from datetime import datetime, timedelta, timezone, date
-from . import db, oanda_client, calendar_schedule, backtest, oanda_execution, scheduler_registry, macro_llm
+from . import db, oanda_client, calendar_schedule, backtest, oanda_execution, scheduler_registry, macro_llm, change_gauges
 from .scanner import run_scan, run_calendar_refresh, run_yield_refresh, run_news_refresh, run_cot_refresh, run_momentum_refresh, run_geo_refresh, run_fed_rate_tone_refresh, run_boe_rate_tone_refresh, run_fomc_minutes_refresh, BOX_SIZE
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
     # called when a gauge verdict flipped / a release landed (debounced), or
     # every 30 min at most. See macro_llm.py.
     scheduler.add_job(lambda: asyncio.to_thread(macro_llm.run_macro_llm_refresh), "cron", minute="*/5", id="macro_llm_refresh")
+    scheduler.add_job(lambda: asyncio.to_thread(change_gauges.refresh_and_log), "cron", minute="7,37", id="change_gauges")
     # Fed and BoE checked independently -- they used to share one "most
     # recent of either bank" lookup, but BoE meets just 1 day after Fed in
     # 5 of 8 months this year, so BoE always won that comparison and Fed's
@@ -213,7 +214,12 @@ async def cron_scan():
         except Exception as e:
             logger.error(f"Macro LLM refresh (cron) failed: {e}")
             macro = {"error": str(e)}
-        return JSONResponse({"ok": True, **result, "macro_llm": macro})
+        try:
+            change = await asyncio.to_thread(change_gauges.refresh_and_log)
+        except Exception as e:
+            logger.error(f"Change gauges (cron) failed: {e}")
+            change = {"error": str(e)}
+        return JSONResponse({"ok": True, **result, "macro_llm": macro, "change_gauges": change})
     except Exception as e:
         logger.error(f"Scan failed: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
@@ -404,12 +410,35 @@ async def refresh_all():
 
 
 @app.get("/api/backtest")
-async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None, debug_gauges: bool = False, gauge_set: str = "yield_cot_momentum", macro_exit: bool = False, spread_pips: float = 1.0, warmup_days: int = 14):
+async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None, debug_gauges: bool = False, gauge_set: str = "yield_cot_momentum", macro_exit: bool = False, spread_pips: float = 1.0, warmup_days: int = 14, exit_mode: str = "system", stop_pips: float = 52.0, entry_type: str = "any"):
     try:
-        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges, gauge_set, macro_exit, spread_pips, warmup_days)
+        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges, gauge_set, macro_exit, spread_pips, warmup_days, exit_mode, stop_pips, entry_type)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/change-gauges")
+async def api_change_gauges():
+    state = await asyncio.to_thread(change_gauges.get_state)
+    if state is None:
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+    return JSONResponse({**state, "gate_source": macro_llm.gate_source()})
+
+
+@app.get("/api/gauge-log")
+async def api_gauge_log(limit: int = 200):
+    return JSONResponse({"rows": await asyncio.to_thread(change_gauges.get_log, limit)})
+
+
+@app.get("/api/ai-replay")
+async def api_ai_replay(start_date: str, end_date: str, max_new: int = 25):
+    try:
+        from . import macro_replay
+        return JSONResponse(await asyncio.to_thread(macro_replay.run_replay, start_date, end_date, max_new))
+    except Exception as e:
+        logger.error(f"AI replay failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=502)
 
 

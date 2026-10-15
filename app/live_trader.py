@@ -83,6 +83,12 @@ def _gauges_support(direction: int) -> bool:
             return llm_verdict == direction
         # No fresh LLM verdict (none logged yet, or too old) -- fall back to
         # the plain gauge count rather than freezing or trading blind.
+    if macro_llm.gate_source() == "change":
+        from . import change_gauges
+        cv = change_gauges.current_verdict_num()
+        if cv is not None:
+            return cv == direction
+        # change verdict unavailable -> fall back to the plain count below
     votes = _current_gauge_votes()
     return macro_verdict(votes) == direction
 
