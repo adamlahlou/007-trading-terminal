@@ -81,9 +81,11 @@ def place_market_order(direction: int, units: int, stop_price: float) -> dict:
     return resp.json()
 
 
-def close_position() -> dict:
-    """Closes any open GBP/USD position entirely. Used for both a normal
-    signal-driven exit and a manual emergency flatten."""
+def close_position(direction: int | None = None) -> dict:
+    """Closes the open GBP/USD position. direction=1 closes only a LONG,
+    -1 only a SHORT, None closes whatever is open (emergency flatten).
+    Only sides that really hold units are sent -- OANDA rejects "ALL" for an
+    empty side. Already flat = no-op, not an error."""
     if not LIVE_EXECUTION_ENABLED:
         raise RuntimeError("LIVE_EXECUTION_ENABLED is not 'true' -- refusing to close a real position")
     if not oanda_client.OANDA_API_TOKEN or not oanda_client.OANDA_ACCOUNT_ID:
@@ -94,10 +96,19 @@ def close_position() -> dict:
         "Content-Type": "application/json",
     }
     url = f"{oanda_client.BASE_URL}/v3/accounts/{oanda_client.OANDA_ACCOUNT_ID}/positions/{oanda_client.INSTRUMENT}/close"
-    body = {"longUnits": "ALL", "shortUnits": "ALL"}
+    pos = get_open_position()
+    body = {}
+    if pos and pos["long_units"] > 0 and direction in (None, 1):
+        body["longUnits"] = "ALL"
+    if pos and pos["short_units"] != 0 and direction in (None, -1):
+        body["shortUnits"] = "ALL"
+    if not body:
+        return {"closed": False, "reason": "no matching real position", "real_position": pos}
     resp = requests.put(url, headers=headers, json=body, timeout=15)
     resp.raise_for_status()
-    return resp.json()
+    out = resp.json()
+    out["closed"] = True
+    return out
 
 
 def get_open_position() -> dict | None:

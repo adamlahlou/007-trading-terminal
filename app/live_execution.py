@@ -58,13 +58,28 @@ def _execute_delayed(event: dict):
     signal_price = event["price"]
 
     try:
-        current_price = oanda_client.fetch_current_price()
+        try:
+            current_price = oanda_client.fetch_current_price()
+        except Exception:
+            import time as _t
+            _t.sleep(2)
+            current_price = oanda_client.fetch_current_price()
         # Buying pays the ask, selling hits the bid -- real spread cost,
         # not the idealized mid-price the theoretical tracker uses.
         real_price = current_price["ask"] if event["direction"] == 1 else current_price["bid"]
         slippage_pips = round((real_price - signal_price) / 0.0001 * event["direction"], 1)
 
+        note = None
         if event["event_type"] in ("entry", "reversal_entry"):
+            real_pos = oanda_execution.get_open_position()
+            if real_pos:
+                d = event["direction"]
+                if (d == 1 and real_pos["long_units"] > 0) or (d == -1 and real_pos["short_units"] != 0):
+                    note = "skipped: real position already open in this direction (no stacking)"
+                    logger.warning(note)
+                    db.add_live_execution_event(event["event_type"], d, signal_price, real_price, slippage_pips, now_iso, error=note)
+                    return
+                oanda_execution.close_position(-d)  # flatten the opposite side first
             account = oanda_execution.get_account_summary()
             units = oanda_execution.calculate_position_size(INITIAL_STOP_PIPS, account["nav"])
             stop_price = (
@@ -77,7 +92,9 @@ def _execute_delayed(event: dict):
                 f"(signal was {signal_price:.5f}, {slippage_pips:+.1f} pips slippage)"
             )
         else:
-            oanda_execution.close_position()
+            res = oanda_execution.close_position(event["direction"])
+            if not res.get("closed"):
+                note = "exit: nothing to close on that side (already flat or already reversed)"
             logger.info(
                 f"REAL EXIT executed @ {real_price:.5f} "
                 f"(signal was {signal_price:.5f}, {slippage_pips:+.1f} pips slippage)"
@@ -85,7 +102,7 @@ def _execute_delayed(event: dict):
 
         db.add_live_execution_event(
             event["event_type"], event["direction"], signal_price, real_price,
-            slippage_pips, now_iso, error=None,
+            slippage_pips, now_iso, error=note,
         )
     except Exception as e:
         logger.error(f"REAL order execution FAILED for {event['event_type']}: {e}")
