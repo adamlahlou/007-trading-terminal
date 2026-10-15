@@ -206,7 +206,14 @@ async def scan_now():
 async def cron_scan():
     try:
         result = await asyncio.to_thread(run_scan)
-        return JSONResponse({"ok": True, **result})
+        # Piggyback the AI macro refresh on the pinged scan: the in-app timer
+        # doesn't fire while the instance sleeps, this does. Debounced inside.
+        try:
+            macro = await asyncio.to_thread(macro_llm.run_macro_llm_refresh)
+        except Exception as e:
+            logger.error(f"Macro LLM refresh (cron) failed: {e}")
+            macro = {"error": str(e)}
+        return JSONResponse({"ok": True, **result, "macro_llm": macro})
     except Exception as e:
         logger.error(f"Scan failed: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
