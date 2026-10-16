@@ -23,7 +23,8 @@ trades on ordinary 1-box pullbacks that weren't genuine reversals.
 from __future__ import annotations
 from datetime import datetime, timezone
 from . import db, notifier
-from .backtest import INITIAL_STOP_PIPS, BREAKEVEN_AFTER_BRICKS, WIDE_TRAIL_BOXES, PIP
+from .backtest import BREAKEVEN_AFTER_BRICKS, WIDE_TRAIL_BOXES, PIP
+from . import strategy_config
 from .gauge_history import macro_verdict
 from . import macro_llm
 
@@ -106,8 +107,16 @@ def process_scan(candle_brick_groups: list[tuple[dict, list[tuple[object, int]]]
     favorable_bricks = saved["favorable_bricks"] if saved else 0
     last_closed_direction = saved["last_closed_direction"] if saved else None
 
-    initial_stop_dist = INITIAL_STOP_PIPS * PIP
+    initial_stop_dist = strategy_config.STOP_PIPS * PIP
     events = []
+    ride_trail = strategy_config.EXIT_MODE == "ride_trail"
+    reversal_only = strategy_config.ENTRY_TYPE == "reversal"
+    # direction of the brick just before this scan's first new brick (for reversal-only entries)
+    last_dir = None
+    for _c, _bs in candle_brick_groups:
+        if _bs:
+            last_dir = db.get_brick_direction_before(_bs[0][1])
+            break
     now_iso = datetime.now(timezone.utc).isoformat()
 
     def record(event_type, direction, price, event_time, brick_seq, reason):
@@ -142,7 +151,10 @@ def process_scan(candle_brick_groups: list[tuple[dict, list[tuple[object, int]]]
             close(stop_price, candle["time"], None, "stop")
 
         for b, seq in bricks_with_seq:
+            prev_dir, last_dir = last_dir, b.direction
             if position == 0:
+                if reversal_only and not (prev_dir is not None and prev_dir != b.direction):
+                    continue  # only enter on a brick that reverses the previous direction
                 if not _gauges_support(b.direction):
                     continue  # gauges don't back this direction -- no trade, stay flat
                 open_position(b.direction, b.close, b.formed_at, seq, "entry")
@@ -158,7 +170,15 @@ def process_scan(candle_brick_groups: list[tuple[dict, list[tuple[object, int]]]
                     trail_dist = WIDE_TRAIL_BOXES * box_size
                     candidate_stop = b.close - trail_dist if position == 1 else b.close + trail_dist
                     stop_price = max(stop_price, candidate_stop) if position == 1 else min(stop_price, candidate_stop)
+                if ride_trail:
+                    # re-check the stop against this same candle right after moving it (same as the backtest)
+                    if position == 1 and candle["low"] <= stop_price:
+                        close(stop_price, b.formed_at, seq, "stop")
+                    elif position == -1 and candle["high"] >= stop_price:
+                        close(stop_price, b.formed_at, seq, "stop")
             else:
+                if ride_trail:
+                    continue  # a reversal brick does not close the trade; only the stop/trail does
                 # Genuine reversal brick -- close the old position regardless
                 # (exiting an invalidated position is never gated). Exit at
                 # whichever price is more protective between the tracked

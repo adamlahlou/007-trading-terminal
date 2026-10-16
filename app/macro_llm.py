@@ -168,6 +168,7 @@ def _calendar_context(now: datetime) -> list[dict]:
 
 
 def _price_context() -> dict:
+    from . import strategy_config
     bricks = db.get_recent_bricks(limit=24)
     if not bricks:
         return {}
@@ -177,7 +178,7 @@ def _price_context() -> dict:
         "last_close": last_close,
         "recent_brick_directions_oldest_to_newest": dirs,
         "net_move_pips_over_these_bricks": round((last_close - first_open) / 0.0001, 1),
-        "brick_size_pips": 22,
+        "brick_size_pips": strategy_config.BOX_PIPS,
     }
 
 

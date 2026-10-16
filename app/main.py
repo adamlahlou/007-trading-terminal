@@ -410,9 +410,9 @@ async def refresh_all():
 
 
 @app.get("/api/backtest")
-async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None, debug_gauges: bool = False, gauge_set: str = "yield_cot_momentum", macro_exit: bool = False, spread_pips: float = 1.0, warmup_days: int = 14, exit_mode: str = "system", stop_pips: float = 52.0, entry_type: str = "any"):
+async def api_backtest(days: int = 45, reversal_only: bool = False, continuation_override: str = None, gate_all_entries: bool = False, trailing_mode: str = "tight", gate_threshold: int = 2, start_date: str = None, end_date: str = None, debug_gauges: bool = False, gauge_set: str = "yield_cot_momentum", macro_exit: bool = False, spread_pips: float = 1.0, warmup_days: int = 14, exit_mode: str = "system", stop_pips: float = 52.0, entry_type: str = "any", box_size: float = 0.0022):
     try:
-        result = await asyncio.to_thread(backtest.run_backtest, days, 0.0022, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges, gauge_set, macro_exit, spread_pips, warmup_days, exit_mode, stop_pips, entry_type)
+        result = await asyncio.to_thread(backtest.run_backtest, days, box_size, reversal_only, continuation_override, gate_all_entries, trailing_mode, gate_threshold, start_date, end_date, debug_gauges, gauge_set, macro_exit, spread_pips, warmup_days, exit_mode, stop_pips, entry_type)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
@@ -458,6 +458,22 @@ async def api_backtest_dump(start_date: str, end_date: str, warmup_days: int = 1
     except Exception as e:
         logger.error(f"Dump failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/strategy-config")
+async def api_strategy_config():
+    from . import strategy_config
+    st = db.get_live_trade_state()
+    paper = st["position"] if st else 0
+    try:
+        rp = await asyncio.to_thread(oanda_execution.get_open_position)
+        real_flat = not rp or (not rp.get("long_units") and not rp.get("short_units"))
+    except Exception as e:
+        rp, real_flat = {"error": str(e)}, None
+    return JSONResponse({**strategy_config.summary(), "gate_source": macro_llm.gate_source(),
+                         "paper_position": paper, "paper_flat": paper == 0,
+                         "real_position": rp, "real_flat": real_flat,
+                         "safe_to_switch": paper == 0 and real_flat is True})
 
 
 @app.get("/api/live-trades")

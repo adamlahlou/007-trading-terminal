@@ -20,7 +20,7 @@ from . import db, oanda_client, oanda_execution, scheduler_registry
 logger = logging.getLogger("007-terminal")
 
 EXECUTION_DELAY = timedelta(minutes=3)
-INITIAL_STOP_PIPS = 52  # matches backtest.py / live_trader.py exactly
+from .strategy_config import STOP_PIPS as INITIAL_STOP_PIPS  # stop + sizing follow the STOP_PIPS setting (default 52)
 
 
 def schedule_delayed_execution(events: list[dict]):

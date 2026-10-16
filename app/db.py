@@ -312,6 +312,14 @@ def append_bricks(bricks: list[dict]) -> list[int]:
     return [next_seq + i for i in range(len(bricks))]
 
 
+def get_brick_direction_before(seq: int):
+    """Direction of the brick immediately before brick `seq` (None if there isn't one)."""
+    conn = get_conn()
+    row = conn.execute("SELECT direction FROM bricks WHERE seq < ? ORDER BY seq DESC LIMIT 1", (seq,)).fetchone()
+    conn.close()
+    return row["direction"] if row else None
+
+
 def get_recent_bricks(limit: int = 200) -> list[dict]:
     conn = get_conn()
     rows = conn.execute(
